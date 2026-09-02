@@ -1,0 +1,69 @@
+# Session State
+
+- **Current Goal**: Node.js Task Runtime SDK MVP 开发
+- **Current Task**: [TASK-009](tasks/TASK-009.md)
+- **Current Status**: DONE
+- **Completed Work**:
+  - 完成 [TASK-001](tasks/TASK-001.md)：初始化工程骨架，配置 TypeScript、Vitest、tsup 双格式打包（ESM/CJS/DTS），完成 pnpm 依赖安装与冒烟测试通过
+  - 完成 [TASK-002](tasks/TASK-002.md)：定义核心类型，实现统一 RuntimeError 错误模型与 RuntimeEventEmitter 事件中心，单元测试 100% 通过
+  - 完成 [TASK-003](tasks/TASK-003.md)：实现 ExecutionContext 单次任务执行实体、Executor 契约接口以及 LifecycleManager 状态机与优雅停机（Graceful Shutdown），单元测试 100% 通过
+  - 完成 [TASK-004](tasks/TASK-004.md)：实现 PriorityQueue 高性能优先级堆队列、ConcurrencyLimiter 令牌控制器与 TaskScheduler 核心调度器，单元测试 100% 通过
+  - 完成 [TASK-005](tasks/TASK-005.md)：实现 CPU 自适应 Worker 检测、WorkerPool 线程池、内联 Worker 运行时与 Crash Detection & Auto Healing 自愈恢复，单元测试 100% 通过
+  - 完成 [TASK-006](tasks/TASK-006.md)：实现 CLIExecutor、ProcessExecutor、stdio 流协议、动态参数解析与进程非 0 / 信号异常处理，单元测试 100% 通过
+  - 完成 [TASK-007](tasks/TASK-007.md)：实现 withTimeout 超时拦截、withRetry 退避重试机制、createLinkedAbortController 取消管理与内存资源转换，单元测试 100% 通过
+  - 完成 [TASK-008](tasks/TASK-008.md)：实现 TaskRuntime 核心聚合调度、createRuntime 统一入口、task.batch / task.map / runtime.all 批处理与 MetricsCollector 统计指标，单元测试 100% 通过
+  - 完成 [TASK-009](tasks/TASK-009.md)：编写全面覆盖的 E2E 端到端集成测试、示例程序（`examples/basic.ts`, `examples/cli.ts`, `examples/batch.ts`）以及高质量 `README.md` 文档
+- **Modified / Created Files**:
+  - `src/index.ts`
+  - `src/core/types.ts`
+  - `src/core/execution.ts`
+  - `src/core/executor.ts`
+  - `src/core/lifecycle.ts`
+  - `src/core/task.ts`
+  - `src/core/runtime.ts`
+  - `src/api/runtime.ts`
+  - `src/api/task.ts`
+  - `src/api/cli.ts`
+  - `src/scheduler/queue.ts`
+  - `src/scheduler/priority-queue.ts`
+  - `src/scheduler/concurrency.ts`
+  - `src/scheduler/scheduler.ts`
+  - `src/executors/thread/types.ts`
+  - `src/executors/thread/worker-runtime.ts`
+  - `src/executors/thread/pool.ts`
+  - `src/executors/thread/executor.ts`
+  - `src/executors/process/executor.ts`
+  - `src/executors/cli/process.ts`
+  - `src/executors/cli/executor.ts`
+  - `src/resource/cpu.ts`
+  - `src/resource/memory.ts`
+  - `src/resource/limits.ts`
+  - `src/execution/error.ts`
+  - `src/execution/timeout.ts`
+  - `src/execution/retry.ts`
+  - `src/execution/cancellation.ts`
+  - `src/transport/json.ts`
+  - `src/transport/binary.ts`
+  - `src/transport/protocol.ts`
+  - `src/observability/events.ts`
+  - `src/observability/metrics.ts`
+  - `src/observability/logger.ts`
+  - `tests/e2e/runtime-e2e.test.ts`
+  - `examples/basic.ts`
+  - `examples/cli.ts`
+  - `examples/batch.ts`
+  - `README.md`
+  - `docs/AI/tasks/TASK-001.md` ~ `docs/AI/tasks/TASK-009.md`
+  - `docs/AI/TASK_INDEX.md`
+  - `docs/AI/SESSION_STATE.md`
+- **Executed Verification Commands & Results**:
+  - `pnpm test`: 22 test files, 84 passed
+  - `pnpm typecheck`: 0 errors
+  - `pnpm build`: ESM/CJS/DTS built successfully
+  - `node dist/index.js test`: 100% verified
+- **Unresolved Issues**: None
+- **Risks & Assumptions**: None
+- **Next Task**: None (All planned MVP tasks TASK-001 ~ TASK-009 are complete)
+- **Files to Read Next Session**:
+  - `docs/AI/SESSION_STATE.md`
+  - `docs/AI/TASK_INDEX.md`
