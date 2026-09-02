@@ -26,7 +26,19 @@ process.stdin.on("end", async () => {
     const payload = JSON.parse(buffer);
     let fn;
     if (payload.fnCode) {
-      fn = (0, eval)("(" + payload.fnCode + ")");
+      const trimmed = payload.fnCode.trim();
+      if (
+        trimmed.startsWith("async function") ||
+        trimmed.startsWith("function") ||
+        trimmed.startsWith("(") ||
+        trimmed.includes("=>")
+      ) {
+        fn = (0, eval)("(" + trimmed + ")");
+      } else if (trimmed.startsWith("async ")) {
+        fn = (0, eval)("(async function " + trimmed.slice(6) + ")");
+      } else {
+        fn = (0, eval)("(function " + trimmed + ")");
+      }
     } else if (payload.modulePath) {
       const mod = await import(payload.modulePath);
       fn = payload.exportName ? mod[payload.exportName] : (mod.default || mod);
@@ -35,7 +47,11 @@ process.stdin.on("end", async () => {
     }
 
     const result = await fn(payload.input);
-    process.stdout.write(JSON.stringify(result !== undefined ? result : null));
+    if (result === undefined) {
+      process.stdout.write("");
+    } else {
+      process.stdout.write(JSON.stringify(result));
+    }
     process.exit(0);
   } catch (err) {
     process.stderr.write(err && err.stack ? err.stack : String(err));
@@ -96,15 +112,23 @@ export class ProcessExecutor implements Executor {
       child.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
       child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
 
+      let killTimer: NodeJS.Timeout | undefined;
       const onAbort = () => {
         try {
           child.kill("SIGTERM");
-          setTimeout(() => {
+          killTimer = setTimeout(() => {
             try {
               child.kill("SIGKILL");
             } catch {}
           }, 1000);
         } catch {}
+      };
+
+      const cleanupSignal = () => {
+        if (killTimer) clearTimeout(killTimer);
+        if (context.signal) {
+          context.signal.removeEventListener("abort", onAbort);
+        }
       };
 
       if (context.signal) {
@@ -120,6 +144,7 @@ export class ProcessExecutor implements Executor {
       }
 
       child.on("error", (err: Error) => {
+        cleanupSignal();
         this.activeProcesses.delete(context.executionId);
         reject(
           new RuntimeError({
@@ -134,6 +159,7 @@ export class ProcessExecutor implements Executor {
       });
 
       child.on("close", (exitCode: number | null, signal: NodeJS.Signals | null) => {
+        cleanupSignal();
         this.activeProcesses.delete(context.executionId);
 
         const stdoutBuffer = Buffer.concat(stdoutChunks);

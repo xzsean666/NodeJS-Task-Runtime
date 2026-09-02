@@ -80,4 +80,20 @@ describe("ProcessExecutor", () => {
       return true;
     });
   });
+
+  it("should correctly return undefined when child function returns undefined", async () => {
+    executor = new ProcessExecutor();
+
+    const ctx = new ExecutionContext({
+      input: null,
+      options: {
+        metadata: {
+          fn: () => {},
+        },
+      },
+    });
+
+    const output = await executor.execute(ctx);
+    expect(output).toBeUndefined();
+  });
 });

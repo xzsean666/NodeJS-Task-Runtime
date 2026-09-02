@@ -58,4 +58,48 @@ describe("MetricsCollector", () => {
     expect(stats.totalWorkers).toBe(2);
     expect(stats.averageDurationMs).toBe(40);
   });
+
+  it("should decrement queuedTasks on queue cancellation and activeExecutions on running cancellation", () => {
+    const events = new RuntimeEventEmitter();
+    const metrics = new MetricsCollector(events);
+
+    // Enqueue 2 tasks
+    events.emit("task:queued", { taskId: "t1", executionId: "e1", priority: 0 });
+    events.emit("task:queued", { taskId: "t2", executionId: "e2", priority: 0 });
+
+    expect(metrics.getStats().queuedTasks).toBe(2);
+
+    // Cancel t1 while in queue
+    events.emit("task:cancel", { taskId: "t1", executionId: "e1", stage: "queued" });
+    expect(metrics.getStats().queuedTasks).toBe(1);
+    expect(metrics.getStats().cancelledTasks).toBe(1);
+
+    // Start t2
+    events.emit("task:start", { taskId: "t2", executionId: "e2", executor: "thread", retryCount: 0, timestamp: 100 });
+    expect(metrics.getStats().queuedTasks).toBe(0);
+    expect(metrics.getStats().activeExecutions).toBe(1);
+
+    // Cancel t2 while running
+    events.emit("task:cancel", { taskId: "t2", executionId: "e2", stage: "running" });
+    expect(metrics.getStats().activeExecutions).toBe(0);
+    expect(metrics.getStats().cancelledTasks).toBe(2);
+  });
+
+  it("should reset metrics on reset()", () => {
+    const events = new RuntimeEventEmitter();
+    const metrics = new MetricsCollector(events);
+
+    events.emit("task:queued", { taskId: "t1", executionId: "e1", priority: 0 });
+    events.emit("task:retry", { taskId: "t1", executionId: "e1", attempt: 1, maxAttempts: 3, delayMs: 100, error: RuntimeError.cancelled() });
+
+    expect(metrics.getStats().totalTasks).toBe(1);
+    expect(metrics.getStats().retriedTasks).toBe(1);
+
+    metrics.reset();
+
+    const fresh = metrics.getStats();
+    expect(fresh.totalTasks).toBe(0);
+    expect(fresh.retriedTasks).toBe(0);
+    expect(fresh.queuedTasks).toBe(0);
+  });
 });

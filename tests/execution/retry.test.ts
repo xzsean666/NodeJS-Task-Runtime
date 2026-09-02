@@ -88,4 +88,28 @@ describe("withRetry", () => {
     await expect(withRetry(fn, options)).rejects.toThrow("Fatal db error");
     expect(fn).toHaveBeenCalledTimes(1);
   });
+
+  it("should immediately abort delay if signal is aborted during backoff sleep", async () => {
+    const controller = new AbortController();
+    let attempts = 0;
+
+    const fn = vi.fn().mockImplementation(async () => {
+      attempts++;
+      throw new Error("Temporary error");
+    });
+
+    // Abort after 20ms during a 1000ms delay
+    setTimeout(() => {
+      controller.abort("Aborted during retry sleep");
+    }, 20);
+
+    const start = Date.now();
+    await expect(
+      withRetry(fn, { attempts: 3, delay: 1000 }, undefined, controller.signal)
+    ).rejects.toThrow(/cancelled/i);
+
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(500); // Exited far earlier than 1000ms
+    expect(attempts).toBe(1);
+  });
 });

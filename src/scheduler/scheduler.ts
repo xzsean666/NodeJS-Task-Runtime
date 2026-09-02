@@ -105,6 +105,7 @@ export class TaskScheduler {
               taskId: context.taskId,
               executionId: context.executionId,
               taskName: context.taskName,
+              stage: "queued",
               reason: cancelErr.message,
             });
             reject(cancelErr);
@@ -126,7 +127,7 @@ export class TaskScheduler {
     this.isDispatching = true;
     try {
       while (!this.queue.isEmpty) {
-        const items = this.queue.toArray();
+        const items = this.queue.toSortedArray();
         let candidateIndex = -1;
 
         for (let i = 0; i < items.length; i++) {
@@ -145,9 +146,13 @@ export class TaskScheduler {
           break;
         }
 
-        const candidate = items[candidateIndex];
-        // Remove this candidate from queue
-        this.queue.remove((item) => item.context.executionId === candidate.context.executionId);
+        let candidate: ScheduledTask<any, any>;
+        if (candidateIndex === 0) {
+          candidate = this.queue.dequeue()!;
+        } else {
+          candidate = items[candidateIndex];
+          this.queue.remove((item) => item.context.executionId === candidate.context.executionId);
+        }
 
         if (candidate.context.isAborted) {
           const err =
@@ -205,11 +210,23 @@ export class TaskScheduler {
 
       resolve(result);
     } catch (err: unknown) {
-      if (context.isAborted && context.error) {
+      if (context.status === "timed_out" || (context.error && context.error.timeout)) {
+        const timeoutErr = context.error ?? context.markTimedOut(context.options.timeout ?? 0);
+        this.eventEmitter?.emit("task:error", {
+          taskId: context.taskId,
+          executionId: context.executionId,
+          taskName: context.taskName,
+          executor: context.executorType,
+          durationMs: context.durationMs ?? 0,
+          error: timeoutErr,
+        });
+        reject(timeoutErr);
+      } else if (context.isAborted && context.error) {
         this.eventEmitter?.emit("task:cancel", {
           taskId: context.taskId,
           executionId: context.executionId,
           taskName: context.taskName,
+          stage: "running",
           reason: context.error.message,
         });
         reject(context.error);

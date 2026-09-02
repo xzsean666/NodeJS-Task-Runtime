@@ -75,7 +75,16 @@ export class PriorityQueue<T> implements Queue<T> {
   }
 
   toArray(): T[] {
-    return this.heap.map((n) => n.item);
+    return this.toSortedArray();
+  }
+
+  toSortedArray(): T[] {
+    if (this.heap.length <= 1) {
+      return this.heap.map((n) => n.item);
+    }
+    return [...this.heap]
+      .sort((a, b) => this.compare(a, b))
+      .map((n) => n.item);
   }
 
   private compare(a: PriorityNode<T>, b: PriorityNode<T>): number {

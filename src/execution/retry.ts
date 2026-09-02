@@ -60,7 +60,8 @@ export interface RetryEvent {
 export async function withRetry<T>(
   action: (attempt: number) => Promise<T>,
   options?: RetryOptions,
-  onRetry?: (event: RetryEvent) => void
+  onRetry?: (event: RetryEvent) => void,
+  signal?: AbortSignal
 ): Promise<T> {
   const normalized = normalizeRetryOptions(options);
   if (!normalized || normalized.attempts <= 1) {
@@ -71,12 +72,15 @@ export async function withRetry<T>(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
+      if (signal?.aborted) {
+        throw RuntimeError.cancelled(String(signal.reason ?? "Task cancelled before retry attempt"));
+      }
       return await action(attempt);
     } catch (err: unknown) {
       const runtimeErr = RuntimeError.from(err, { retryCount: attempt - 1 });
 
       // Never retry cancelled tasks
-      if (runtimeErr.cancelled) {
+      if (runtimeErr.cancelled || signal?.aborted) {
         throw runtimeErr;
       }
 
@@ -102,7 +106,25 @@ export async function withRetry<T>(
       }
 
       if (delayMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        if (signal?.aborted) {
+          throw RuntimeError.cancelled(String(signal.reason ?? "Task cancelled during retry delay"));
+        }
+        await new Promise<void>((resolve, reject) => {
+          let timer: NodeJS.Timeout | undefined;
+          const onAbort = () => {
+            if (timer) clearTimeout(timer);
+            reject(RuntimeError.cancelled(String(signal?.reason ?? "Task cancelled during retry delay")));
+          };
+          if (signal) {
+            signal.addEventListener("abort", onAbort, { once: true });
+          }
+          timer = setTimeout(() => {
+            if (signal) {
+              signal.removeEventListener("abort", onAbort);
+            }
+            resolve();
+          }, delayMs);
+        });
       }
     }
   }

@@ -2,7 +2,7 @@
  * Batch processing, concurrency control, and priority scheduling example.
  */
 
-import { createRuntime } from "../src/index.js";
+import { createRuntime } from "../dist/index.js";
 
 async function main() {
   const runtime = createRuntime({

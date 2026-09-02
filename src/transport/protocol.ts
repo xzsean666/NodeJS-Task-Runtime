@@ -18,8 +18,7 @@ export function writeToStdin(
   }
 
   if (format === "json") {
-    const serialized = typeof input === "string" ? input : serializeJson(input);
-    stdin.write(serialized);
+    stdin.write(serializeJson(input));
   } else if (format === "string") {
     stdin.write(typeof input === "string" ? input : String(input));
   } else if (format === "binary") {

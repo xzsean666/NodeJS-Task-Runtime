@@ -49,11 +49,22 @@ export class MetricsCollector {
     });
 
     events.on("task:timeout", () => {
-      this.timedOutTasks++;
+      // task:timeout metric will be accounted when task:error fires or if standalone
     });
 
-    events.on("task:cancel", () => {
+    events.on("task:cancel", (e) => {
       this.cancelledTasks++;
+      if (e.stage === "queued") {
+        this.queuedTasks = Math.max(0, this.queuedTasks - 1);
+      } else if (e.stage === "running") {
+        this.activeExecutions = Math.max(0, this.activeExecutions - 1);
+      } else {
+        if (this.queuedTasks > 0) {
+          this.queuedTasks--;
+        } else if (this.activeExecutions > 0) {
+          this.activeExecutions--;
+        }
+      }
     });
 
     events.on("task:retry", () => {

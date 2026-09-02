@@ -2,7 +2,7 @@
  * Basic usage example of Node.js Task Runtime.
  */
 
-import { createRuntime } from "../src/index.js";
+import { createRuntime } from "../dist/index.js";
 
 async function main() {
   // 1. Create a runtime with auto worker allocation

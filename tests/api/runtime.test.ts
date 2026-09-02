@@ -80,4 +80,74 @@ describe("createRuntime & Task API", () => {
 
     await expect(quickTask(20)).rejects.toThrow(/Runtime is stopped/);
   });
+
+  it("should integrate with custom logger when provided", async () => {
+    const logs: string[] = [];
+    const customLogger = {
+      debug: (msg: string) => logs.push(`DEBUG: ${msg}`),
+      info: (msg: string) => logs.push(`INFO: ${msg}`),
+      warn: (msg: string) => logs.push(`WARN: ${msg}`),
+      error: (msg: string) => logs.push(`ERROR: ${msg}`),
+    };
+
+    runtime = createRuntime({ workers: 2, logger: customLogger });
+    const task = runtime.task((x: number) => x * 3, { name: "multiply" });
+
+    await task(10);
+    expect(logs.some((l) => l.includes("multiply"))).toBe(true);
+  });
+
+  it("should execute high-priority queued tasks before low-priority queued tasks when workers are saturated", async () => {
+    // 1 worker to ensure queuing
+    runtime = createRuntime({ workers: 1, maxConcurrency: 1 });
+
+    const order: string[] = [];
+    runtime.on("task:complete", (e) => {
+      if (typeof e.result === "string") {
+        order.push(e.result);
+      }
+    });
+
+    const slowTask = runtime.task(
+      async (name: string) => {
+        await new Promise((r) => setTimeout(r, 60));
+        return name;
+      },
+      { name: "processor" }
+    );
+
+    // First task occupies the 1 worker
+    const p1 = slowTask("first", { priority: 0 });
+    // Queued tasks with different priorities
+    const pLow = slowTask("low", { priority: 1 });
+    const pHigh = slowTask("high", { priority: 100 });
+    const pMid = slowTask("mid", { priority: 10 });
+
+    await Promise.all([p1, pLow, pHigh, pMid]);
+
+    expect(order).toEqual(["first", "high", "mid", "low"]);
+  });
+
+  it("should reject queued tasks when runtime.destroy() is called", async () => {
+    runtime = createRuntime({ workers: 1, maxConcurrency: 1 });
+
+    const blocker = runtime.task(
+      async () => {
+        await new Promise((r) => setTimeout(r, 200));
+        return "done";
+      },
+      { name: "blocker" }
+    );
+
+    const blockerPromise = blocker(null);
+    const queuedPromise = blocker(null);
+
+    // Give time to enqueue
+    await new Promise((r) => setTimeout(r, 20));
+
+    await runtime.destroy();
+
+    await expect(queuedPromise).rejects.toThrow(/Runtime destroyed/);
+    await expect(blockerPromise).rejects.toThrow();
+  });
 });

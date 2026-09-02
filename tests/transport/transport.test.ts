@@ -28,4 +28,18 @@ describe("Transport protocols", () => {
 
     expect(formatOutput(binBuf, "ignore")).toBeUndefined();
   });
+
+  it("should write properly serialized JSON for string, object, and number inputs to stdin", async () => {
+    const { PassThrough } = await import("node:stream");
+    const { writeToStdin } = await import("../../src/transport/protocol.js");
+
+    const stream = new PassThrough();
+    const chunks: Buffer[] = [];
+    stream.on("data", (c) => chunks.push(c));
+
+    writeToStdin(stream, "plain string", "json");
+    const output = Buffer.concat(chunks).toString("utf-8");
+    expect(output).toBe('"plain string"');
+    expect(JSON.parse(output)).toBe("plain string");
+  });
 });

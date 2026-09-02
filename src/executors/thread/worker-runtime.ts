@@ -19,8 +19,20 @@ if (parentPort) {
       try {
         let fn;
         if (fnCode) {
-          // Evaluate function from string
-          fn = (0, eval)("(" + fnCode + ")");
+          // Evaluate function from string safely
+          const trimmed = fnCode.trim();
+          if (
+            trimmed.startsWith("async function") ||
+            trimmed.startsWith("function") ||
+            trimmed.startsWith("(") ||
+            trimmed.includes("=>")
+          ) {
+            fn = (0, eval)("(" + trimmed + ")");
+          } else if (trimmed.startsWith("async ")) {
+            fn = (0, eval)("(async function " + trimmed.slice(6) + ")");
+          } else {
+            fn = (0, eval)("(function " + trimmed + ")");
+          }
         } else if (modulePath) {
           const mod = await import(modulePath);
           fn = exportName ? mod[exportName] : (mod.default || mod);

@@ -51,6 +51,7 @@ export interface TaskCancelEvent {
   taskId: string;
   executionId: string;
   taskName?: string;
+  stage?: "queued" | "running";
   reason?: string;
 }
 

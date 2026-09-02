@@ -2,7 +2,7 @@
  * CLI Task execution example with argument passing and JSON parsing.
  */
 
-import { createRuntime } from "../src/index.js";
+import { createRuntime } from "../dist/index.js";
 
 async function main() {
   const runtime = createRuntime();
