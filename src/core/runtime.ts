@@ -14,6 +14,7 @@ import type {
 import { LifecycleManager } from "./lifecycle.js";
 import { ExecutionContext } from "./execution.js";
 import { TaskScheduler } from "../scheduler/scheduler.js";
+import { randomUUID } from "node:crypto";
 import { ThreadExecutor } from "../executors/thread/executor.js";
 import { ProcessExecutor } from "../executors/process/executor.js";
 import { CLIExecutor } from "../executors/cli/executor.js";
@@ -101,9 +102,12 @@ export class TaskRuntime {
       const executorType =
         mergedOptions.executor ?? this.options.defaultExecutor ?? "thread";
 
+      const rootTaskId = mergedOptions.taskId ?? `task_${randomUUID()}`;
+
       return withRetry(
         (attempt) => {
           const context = new ExecutionContext<TInput, TOutput>({
+            taskId: rootTaskId,
             input,
             options: mergedOptions,
             executorType,

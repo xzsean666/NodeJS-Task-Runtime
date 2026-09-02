@@ -96,4 +96,28 @@ describe("ProcessExecutor", () => {
     const output = await executor.execute(ctx);
     expect(output).toBeUndefined();
   });
+
+  it("should support stats, terminate and memory limits", async () => {
+    executor = new ProcessExecutor();
+
+    const ctx = new ExecutionContext({
+      input: null,
+      options: {
+        resource: { maxMemoryMb: 256 },
+        metadata: {
+          fn: () => new Promise((resolve) => setTimeout(resolve, 10000)),
+        },
+      },
+    });
+
+    const execPromise = executor.execute(ctx);
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(executor.stats().active).toBeGreaterThanOrEqual(1);
+
+    await executor.terminate(ctx.executionId, "Manual kill");
+    await expect(execPromise).rejects.toThrow();
+
+    expect(executor.stats().active).toBe(0);
+  });
 });

@@ -122,6 +122,9 @@ export function runCliProcess<TInput = unknown, TOutput = unknown>(
 
     // Write input to stdin if pipe is open
     if (child.stdin) {
+      child.stdin.on("error", () => {
+        // Suppress EPIPE errors if child exits before reading stdin
+      });
       try {
         writeToStdin(child.stdin, context.input, options.stdin ?? "json");
       } catch (err) {

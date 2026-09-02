@@ -97,40 +97,49 @@ export class LifecycleManager {
     return Array.from(this.activeExecutions.values());
   }
 
+  private shutdownPromise?: Promise<void>;
+
   async shutdown(timeoutMs?: number): Promise<void> {
     if (this._state === "stopped") {
       return;
     }
-
-    const timeout = timeoutMs ?? this.defaultShutdownTimeout;
-    this.transitionTo("draining");
-
-    if (this.activeExecutions.size > 0) {
-      let timer: NodeJS.Timeout | undefined;
-      const drainPromise = new Promise<void>((resolve) => {
-        this.drainPromiseResolve = resolve;
-      });
-
-      const timeoutPromise = new Promise<void>((resolve) => {
-        timer = setTimeout(() => {
-          // Force abort any remaining executions upon timeout
-          for (const execution of this.activeExecutions.values()) {
-            execution.abort("Runtime shutdown timeout exceeded");
-          }
-          resolve();
-        }, timeout);
-      });
-
-      try {
-        await Promise.race([drainPromise, timeoutPromise]);
-      } finally {
-        if (timer) {
-          clearTimeout(timer);
-        }
-      }
+    if (this.shutdownPromise) {
+      return this.shutdownPromise;
     }
 
-    this.transitionTo("stopped");
+    this.shutdownPromise = (async () => {
+      const timeout = timeoutMs ?? this.defaultShutdownTimeout;
+      this.transitionTo("draining");
+
+      if (this.activeExecutions.size > 0) {
+        let timer: NodeJS.Timeout | undefined;
+        const drainPromise = new Promise<void>((resolve) => {
+          this.drainPromiseResolve = resolve;
+        });
+
+        const timeoutPromise = new Promise<void>((resolve) => {
+          timer = setTimeout(() => {
+            // Force abort any remaining executions upon timeout
+            for (const execution of this.activeExecutions.values()) {
+              execution.abort("Runtime shutdown timeout exceeded");
+            }
+            resolve();
+          }, timeout);
+        });
+
+        try {
+          await Promise.race([drainPromise, timeoutPromise]);
+        } finally {
+          if (timer) {
+            clearTimeout(timer);
+          }
+        }
+      }
+
+      this.transitionTo("stopped");
+    })();
+
+    return this.shutdownPromise;
   }
 
   forceStop(): void {

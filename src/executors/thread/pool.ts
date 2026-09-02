@@ -153,8 +153,10 @@ export class WorkerPool {
     // Terminate all workers
     const terminations: Promise<number>[] = [];
     for (const pw of this.workers.values()) {
-      if (pw.currentReject) {
-        pw.currentReject(RuntimeError.runtimeStopped("Worker pool destroyed"));
+      const reject = pw.currentReject;
+      this.resetWorkerState(pw);
+      if (reject) {
+        reject(RuntimeError.runtimeStopped("Worker pool destroyed"));
       }
       terminations.push(pw.worker.terminate());
     }
@@ -251,10 +253,14 @@ export class WorkerPool {
       error: err,
     });
 
-    if (pooled.currentReject) {
-      pooled.currentReject(
+    const reject = pooled.currentReject;
+    const executionId = pooled.currentExecutionId;
+    this.resetWorkerState(pooled);
+
+    if (reject) {
+      reject(
         RuntimeError.workerCrashed(err.message, {
-          executionId: pooled.currentExecutionId,
+          executionId,
           executor: "thread",
           cause: err,
         })

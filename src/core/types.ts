@@ -74,6 +74,11 @@ export interface RetryOptions {
  */
 export interface TaskOptions<TInput = unknown> {
   /**
+   * Optional custom task ID for distributed tracing and tracking.
+   */
+  taskId?: string;
+
+  /**
    * Human-readable task name.
    */
   name?: string;

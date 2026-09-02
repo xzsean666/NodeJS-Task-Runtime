@@ -103,4 +103,73 @@ describe("CLIExecutor", () => {
       return true;
     });
   });
+
+  it("should support stats and terminate methods", async () => {
+    executor = new CLIExecutor("node");
+
+    const ctx = new ExecutionContext({
+      input: null,
+      options: {
+        args: ["-e", "setTimeout(() => {}, 10000)"],
+      },
+    });
+
+    const execPromise = executor.execute(ctx);
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(executor.stats().active).toBeGreaterThanOrEqual(1);
+
+    await executor.terminate(ctx.executionId, "Manual termination");
+    await expect(execPromise).rejects.toThrow();
+
+    expect(executor.stats().active).toBe(0);
+  });
+
+  it("should handle binary stdout and ignore/inherit formats", async () => {
+    executor = new CLIExecutor("node");
+
+    const ctxBin = new ExecutionContext({
+      input: null,
+      options: {
+        args: ["-e", "process.stdout.write('binary-data')"],
+        stdout: "binary",
+      },
+    });
+
+    const binResult = await executor.execute<Buffer>(ctxBin);
+    expect(Buffer.isBuffer(binResult)).toBe(true);
+    expect(binResult.toString("utf-8")).toBe("binary-data");
+
+    const ctxIgn = new ExecutionContext({
+      input: null,
+      options: {
+        args: ["-e", "process.stdout.write('ignored')"],
+        stdout: "ignore",
+      },
+    });
+
+    const ignResult = await executor.execute(ctxIgn);
+    expect(ignResult).toBeUndefined();
+  });
+
+  it("should reject when dynamic args function throws error", async () => {
+    executor = new CLIExecutor("node");
+
+    const ctx = new ExecutionContext({
+      input: null,
+      options: {
+        args: () => {
+          throw new Error("Invalid dynamic args calculation");
+        },
+      },
+    });
+
+    await expect(executor.execute(ctx)).rejects.toSatisfy((err: unknown) => {
+      expect(RuntimeError.isRuntimeError(err)).toBe(true);
+      if (RuntimeError.isRuntimeError(err)) {
+        expect(err.code).toBe(RuntimeErrorCode.INVALID_ARGUMENT);
+      }
+      return true;
+    });
+  });
 });

@@ -9,8 +9,6 @@ import { writeToStdin, formatOutput } from "../../transport/protocol.js";
 import { RuntimeError, RuntimeErrorCode } from "../../execution/error.js";
 
 const NODE_CHILD_RUNNER = `
-const readline = require("node:readline");
-
 let buffer = "";
 process.stdin.setEncoding("utf-8");
 
@@ -140,6 +138,9 @@ export class ProcessExecutor implements Executor {
       }
 
       if (child.stdin) {
+        child.stdin.on("error", () => {
+          // Suppress EPIPE errors if child process terminates early
+        });
         writeToStdin(child.stdin, payload, "json");
       }
 

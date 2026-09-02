@@ -15,6 +15,7 @@ export interface ScheduledTask<TInput = unknown, TOutput = unknown> {
   executor: Executor;
   resolve: (value: TOutput) => void;
   reject: (reason: unknown) => void;
+  cleanupQueueSignal?: () => void;
 }
 
 export interface TaskSchedulerOptions {
@@ -78,11 +79,19 @@ export class TaskScheduler {
     }
 
     return new Promise<TOutput>((resolve, reject) => {
+      let cleanupQueueSignal: (() => void) | undefined;
+
       const task: ScheduledTask<TInput, TOutput> = {
         context,
         executor,
         resolve,
         reject,
+        cleanupQueueSignal: () => {
+          if (cleanupQueueSignal) {
+            cleanupQueueSignal();
+            cleanupQueueSignal = undefined;
+          }
+        },
       };
 
       context.markQueued();
@@ -98,6 +107,10 @@ export class TaskScheduler {
         const onAbort = () => {
           const removed = this.queue.remove((item) => item.context.executionId === context.executionId);
           if (removed) {
+            if (cleanupQueueSignal) {
+              cleanupQueueSignal();
+              cleanupQueueSignal = undefined;
+            }
             const cancelErr = context.markCancelled(
               context.signal.reason ? String(context.signal.reason) : "Cancelled while in queue"
             );
@@ -112,6 +125,9 @@ export class TaskScheduler {
           }
         };
         context.signal.addEventListener("abort", onAbort, { once: true });
+        cleanupQueueSignal = () => {
+          context.signal.removeEventListener("abort", onAbort);
+        };
       }
 
       this.queue.enqueue(task, context.priority);
@@ -127,32 +143,43 @@ export class TaskScheduler {
     this.isDispatching = true;
     try {
       while (!this.queue.isEmpty) {
-        const items = this.queue.toSortedArray();
-        let candidateIndex = -1;
+        const top = this.queue.peek();
+        if (!top) break;
 
-        for (let i = 0; i < items.length; i++) {
-          const item = items[i];
-          const taskKey = item.context.taskName;
-          const taskLimit = item.context.options.concurrency;
+        let candidate: ScheduledTask<any, any> | undefined;
 
-          if (this.concurrency.canAcquire(taskKey, taskLimit)) {
-            candidateIndex = i;
-            break;
-          }
-        }
+        // Fast-path: top priority task can be acquired directly without full heap sort
+        const topTaskKey = top.context.taskName;
+        const topTaskLimit = top.context.options.concurrency;
 
-        if (candidateIndex === -1) {
-          // No task currently can be acquired due to concurrency limits
-          break;
-        }
-
-        let candidate: ScheduledTask<any, any>;
-        if (candidateIndex === 0) {
+        if (this.concurrency.canAcquire(topTaskKey, topTaskLimit)) {
           candidate = this.queue.dequeue()!;
         } else {
+          // Slow-path: top item is limited by per-task concurrency; find first runnable candidate
+          const items = this.queue.toSortedArray();
+          let candidateIndex = -1;
+
+          for (let i = 1; i < items.length; i++) {
+            const item = items[i];
+            const taskKey = item.context.taskName;
+            const taskLimit = item.context.options.concurrency;
+
+            if (this.concurrency.canAcquire(taskKey, taskLimit)) {
+              candidateIndex = i;
+              break;
+            }
+          }
+
+          if (candidateIndex === -1) {
+            // No task currently can be acquired due to concurrency limits
+            break;
+          }
+
           candidate = items[candidateIndex];
-          this.queue.remove((item) => item.context.executionId === candidate.context.executionId);
+          this.queue.remove((item) => item.context.executionId === candidate!.context.executionId);
         }
+
+        candidate.cleanupQueueSignal?.();
 
         if (candidate.context.isAborted) {
           const err =
@@ -197,6 +224,11 @@ export class TaskScheduler {
 
     try {
       const result = await executor.execute(context);
+
+      if (context.status === "timed_out" || context.status === "cancelled") {
+        return;
+      }
+
       context.markCompleted(result);
 
       this.eventEmitter?.emit("task:complete", {

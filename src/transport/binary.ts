@@ -1,6 +1,4 @@
-/**
- * Binary and buffer transport helpers.
- */
+import { serializeJson } from "./json.js";
 
 export function toBuffer(data: unknown): Buffer {
   if (Buffer.isBuffer(data)) {
@@ -15,5 +13,5 @@ export function toBuffer(data: unknown): Buffer {
   if (data === null || data === undefined) {
     return Buffer.alloc(0);
   }
-  return Buffer.from(JSON.stringify(data), "utf-8");
+  return Buffer.from(serializeJson(data), "utf-8");
 }

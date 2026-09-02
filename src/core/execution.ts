@@ -105,6 +105,9 @@ export class ExecutionContext<TInput = unknown, TOutput = unknown> {
   }
 
   markCompleted(result: TOutput): void {
+    if (this.status === "cancelled" || this.status === "timed_out") {
+      return;
+    }
     this.status = "completed";
     this.completedAt = Date.now();
     this.durationMs = this.startedAt ? this.completedAt - this.startedAt : 0;
@@ -113,6 +116,9 @@ export class ExecutionContext<TInput = unknown, TOutput = unknown> {
   }
 
   markFailed(error: unknown): RuntimeError {
+    if (this.status === "cancelled" || this.status === "timed_out") {
+      return this.error ?? RuntimeError.from(error);
+    }
     this.status = "failed";
     this.completedAt = Date.now();
     this.durationMs = this.startedAt ? this.completedAt - this.startedAt : 0;
