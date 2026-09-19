@@ -128,7 +128,13 @@ export function runCliProcess<TInput = unknown, TOutput = unknown>(
       try {
         writeToStdin(child.stdin, context.input, options.stdin ?? "json");
       } catch (err) {
-        // stdin write failed
+        try {
+          child.kill("SIGKILL");
+        } catch {}
+        if (killTimer) clearTimeout(killTimer);
+        if (context.signal) {
+          context.signal.removeEventListener("abort", onAbort);
+        }
         reject(err);
         return;
       }

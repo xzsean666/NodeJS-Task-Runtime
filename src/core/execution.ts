@@ -19,6 +19,7 @@ export interface ExecutionContextOptions<TInput = unknown> {
   executorType?: ExecutorType;
   retryCount?: number;
   priority?: number;
+  onProgress?: (event: import("../observability/events.js").TaskProgressEvent) => void;
 }
 
 export class ExecutionContext<TInput = unknown, TOutput = unknown> {
@@ -36,10 +37,12 @@ export class ExecutionContext<TInput = unknown, TOutput = unknown> {
   startedAt?: number;
   completedAt?: number;
   durationMs?: number;
+  progress = 0;
 
   result?: TOutput;
   error?: RuntimeError;
 
+  private readonly onProgressCallback?: (event: import("../observability/events.js").TaskProgressEvent) => void;
   private readonly abortController: AbortController;
   private userSignalCleanup?: () => void;
 
@@ -55,6 +58,7 @@ export class ExecutionContext<TInput = unknown, TOutput = unknown> {
 
     this.status = "pending";
     this.createdAt = Date.now();
+    this.onProgressCallback = options.onProgress;
 
     this.abortController = new AbortController();
 
@@ -173,6 +177,24 @@ export class ExecutionContext<TInput = unknown, TOutput = unknown> {
       return;
     }
     this.markCancelled(reason);
+  }
+
+  /**
+   * Reports execution progress (e.g. 0 to 100).
+   */
+  reportProgress(progress: number, message?: string, metadata?: Record<string, unknown>): void {
+    this.progress = progress;
+    if (this.onProgressCallback) {
+      this.onProgressCallback({
+        taskId: this.taskId,
+        executionId: this.executionId,
+        taskName: this.taskName,
+        progress,
+        message,
+        metadata,
+        timestamp: Date.now(),
+      });
+    }
   }
 
   /**

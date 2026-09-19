@@ -2,9 +2,10 @@
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9+-blue.svg)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-Passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-114%20Passing-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/Version-0.2.0-orange.svg)]()
 
-A simple, unified, high-performance **Task Execution Runtime** for Node.js.
+A simple, unified, enterprise-grade **Task Execution Runtime** for Node.js.
 
 ---
 
@@ -19,13 +20,18 @@ A simple, unified, high-performance **Task Execution Runtime** for Node.js.
 
 ## ✨ Key Features
 
-- 🧵 **Worker Threads Pool**: Zero-configuration worker thread execution with automated CPU-core sensing (`workers: "auto"`).
-- 💻 **Unified CLI & Child Process Execution**: Seamlessly invoke external binaries, CLI tools (FFmpeg, Rust/Go utilities, shell scripts) with automatic argument mapping and JSON/string/buffer stdio formatting.
-- ⚡ **Priority Queue & Concurrency Control**: Priority-based scheduling with stable FIFO order for identical priorities, plus global and task-level concurrency rate limits.
+- 🧵 **Worker Threads Pool**: Zero-configuration worker thread execution with automated CPU-core sensing (`workers: "auto"`), lazy worker initialization, and dynamic runtime pool resizing (`runtime.resizeWorkers(n)`).
+- 💻 **Unified CLI & Child Process Execution**: Seamlessly invoke external binaries, CLI tools (FFmpeg, Rust/Go utilities, shell scripts) with automatic argument mapping, stdin/stdout formatters (JSON/string/binary/pipe), and zombie process prevention.
+- ⚡ **Priority Queue & Concurrency Control**: Stable FIFO priority scheduling, per-task and global concurrency bounds, and an optimized $O(N)$ selective dequeuing algorithm.
 - 🛡️ **Crash Recovery & Auto-Healing**: Immediate detection of worker crashes or process errors with automatic worker replacement and isolated task error propagation.
-- ⏱️ **Execution Controls**: Built-in timeout enforcement, configurable retry strategies (fixed, linear, exponential backoff), and standard `AbortSignal` cancellation.
-- 📊 **Full Observability & Metrics**: Real-time runtime statistics (`runtime.stats()`), execution durations, event emitter (`task:queued`, `task:start`, `task:complete`, `task:error`, `task:retry`, `worker:crash`, `lifecycle:change`), and logger adapters.
-- 🛑 **Graceful Shutdown**: Drain active tasks safely within a timeout window to prevent dropped workloads or zombie processes.
+- ⏱️ **Execution Controls & Jitter**: Built-in timeout enforcement, configurable retry strategies (fixed, linear, exponential backoff) with **Full Jitter** support to prevent retry storms, and standard `AbortSignal` cancellation.
+- 🧅 **Onion-Model Middlewares**: Register runtime-wide and task-level interceptors (`runtime.use(middleware)`) for APM logging, validation, distributed tracing, and metrics.
+- 🔗 **Task Pipeline & Chaining**: Chain tasks seamlessly using `runtime.pipeline(t1, t2, t3)` or `task.pipe(nextTask)`.
+- 📦 **Advanced Batch Processing**: Execute batches with `task.batch()` (fail-fast) or `task.batchSettled()` (fault-tolerant `PromiseSettledResult`), with optional `batchConcurrency` windowing.
+- 🚦 **Backpressure & Queue Overflow Protection**: Configure `maxQueueSize` with `overflowStrategy: "reject" | "drop_oldest"` to prevent memory exhaustion under high ingest rates.
+- 📈 **Real-Time Progress Reporting**: Long-running tasks can report execution progress via `context.reportProgress(percent, msg)`, triggering `"task:progress"` events.
+- 📊 **Full Observability & Metrics**: Real-time runtime statistics (`runtime.stats()`), execution durations, event emitter (`task:queued`, `task:start`, `task:progress`, `task:complete`, `task:error`, `task:retry`, `worker:spawn`, `worker:crash`, `lifecycle:change`), and logger adapters.
+- 🛑 **Graceful Shutdown**: Safely drain both active and pending queued tasks before shutting down, with configurable timeout fallback.
 
 ---
 
@@ -33,9 +39,9 @@ A simple, unified, high-performance **Task Execution Runtime** for Node.js.
 
 ```bash
 pnpm add node-task-runtime
+# or npm install node-task-runtime
+# or yarn add node-task-runtime
 ```
-
-*(Also compatible with `npm` and `yarn`)*
 
 ---
 
@@ -59,11 +65,11 @@ const fibonacci = runtime.task((n: number) => {
 const result = await fibonacci(40);
 console.log("Fibonacci(40) =", result);
 
-// Execute batch in parallel across the worker pool
+// Execute batch across the worker pool
 const batchResults = await fibonacci.batch([10, 20, 30, 35]);
 console.log("Batch results:", batchResults);
 
-// Graceful shutdown
+// Graceful shutdown (waits for all queued/running tasks to complete)
 await runtime.shutdown();
 ```
 
@@ -93,7 +99,96 @@ const response = await processImage({ inputPath: "photo.png", quality: 85 });
 
 ---
 
-### 3. Priority Scheduling & Concurrency Limits
+### 3. Onion-Model Middlewares (Interceptors)
+
+```typescript
+import { createRuntime } from "node-task-runtime";
+
+const runtime = createRuntime();
+
+// Add global middleware (e.g. performance logging / tracing)
+runtime.use(async (ctx, next) => {
+  const start = Date.now();
+  console.log(`[START] Task ${ctx.taskName} (${ctx.taskId})`);
+  try {
+    const result = await next();
+    console.log(`[DONE] Task ${ctx.taskName} took ${Date.now() - start}ms`);
+    return result;
+  } catch (err) {
+    console.error(`[FAIL] Task ${ctx.taskName} failed:`, err);
+    throw err;
+  }
+});
+
+// Define task with task-specific middleware
+const compute = runtime.task((x: number) => x * 10, {
+  name: "compute",
+  middlewares: [
+    async (ctx, next) => {
+      // Validate input before executing
+      if (typeof ctx.input !== "number") throw new Error("Input must be a number");
+      return next();
+    },
+  ],
+});
+
+await compute(42);
+```
+
+---
+
+### 4. Pipeline & Task Chaining
+
+```typescript
+import { createRuntime } from "node-task-runtime";
+
+const runtime = createRuntime();
+
+const download = runtime.task(async (url: string) => `Raw data from ${url}`);
+const parse = runtime.task((raw: string) => ({ count: raw.length }));
+const format = (data: { count: number }) => `Parsed ${data.count} bytes`;
+
+// Method A: runtime.pipeline
+const fullPipeline = runtime.pipeline(download, parse, format);
+const output = await fullPipeline("https://example.com/data");
+console.log(output);
+
+// Method B: task.pipe chaining
+const processFlow = download.pipe(parse);
+const result = await processFlow("https://example.com/data");
+```
+
+---
+
+### 5. Advanced Batch Processing & Fault Tolerance
+
+```typescript
+import { createRuntime } from "node-task-runtime";
+
+const runtime = createRuntime({ workers: 4 });
+
+const fetchUser = runtime.task(async (userId: number) => {
+  if (userId === 13) throw new Error("User 13 not found");
+  return { id: userId, name: `User_${userId}` };
+});
+
+// Run batch with controlled concurrency window and fault tolerance
+const results = await fetchUser.batchSettled([1, 2, 13, 14], {
+  batchConcurrency: 2, // At most 2 tasks running simultaneously in this batch
+});
+
+results.forEach((res, idx) => {
+  if (res.status === "fulfilled") {
+    console.log("Success:", res.value);
+  } else {
+    console.warn("Failed:", res.reason.message);
+  }
+});
+```
+
+---
+
+### 6. Priority Scheduling & Concurrency Limits
 
 ```typescript
 import { createRuntime } from "node-task-runtime";
@@ -104,7 +199,6 @@ const runtime = createRuntime({
 });
 
 const task = runtime.task(async (data: { id: string }) => {
-  await fetch(`https://api.example.com/sync/${data.id}`);
   return { id: data.id, synced: true };
 }, {
   name: "data-sync",
@@ -113,6 +207,7 @@ const task = runtime.task(async (data: { id: string }) => {
     attempts: 3,
     backoff: "exponential",
     delay: 200,
+    jitter: true, // Prevents retry storm with Full Jitter
   },
 });
 
@@ -125,74 +220,44 @@ await Promise.all([urgent, standard]);
 
 ---
 
-### 4. Cancellation & Timeouts
+### 7. Backpressure & Queue Overflow Protection
+
+```typescript
+import { createRuntime } from "node-task-runtime";
+
+const runtime = createRuntime({
+  maxConcurrency: 10,
+  maxQueueSize: 1000,           // Maximum 1000 pending tasks allowed in queue
+  overflowStrategy: "reject",   // Reject immediately with RuntimeError (QUEUE_FULL)
+  // Or "drop_oldest" to discard oldest pending task
+});
+```
+
+---
+
+### 8. Progress Reporting
 
 ```typescript
 import { createRuntime } from "node-task-runtime";
 
 const runtime = createRuntime();
 
-const controller = new AbortController();
+runtime.on("task:progress", ({ taskId, taskName, progress, message }) => {
+  console.log(`[Progress ${progress}%] ${taskName}: ${message}`);
+});
 
-const longTask = runtime.task(
-  async () => {
-    // long running computation
-  },
-  { timeout: 5000 } // Auto aborts if execution exceeds 5 seconds
-);
-
-// Pass external signal to cancel manually
-const promise = longTask(null, { signal: controller.signal });
-
-// Cancel execution
-controller.abort("User cancelled operation");
+// Middleware can emit progress updates
+runtime.use(async (ctx, next) => {
+  ctx.reportProgress(10, "Initializing");
+  const res = await next();
+  ctx.reportProgress(100, "Completed");
+  return res;
+});
 ```
 
 ---
 
-### 5. Observability & Runtime Stats
-
-```typescript
-import { createRuntime } from "node-task-runtime";
-
-const runtime = createRuntime();
-
-// Listen to lifecycle & execution events
-runtime.on("task:start", ({ taskId, taskName, executor }) => {
-  console.log(`[Start] Task ${taskName} (${taskId}) on ${executor}`);
-});
-
-runtime.on("task:complete", ({ taskId, durationMs }) => {
-  console.log(`[Complete] Task ${taskId} in ${durationMs}ms`);
-});
-
-runtime.on("task:retry", ({ taskName, attempt, delayMs }) => {
-  console.warn(`[Retry] ${taskName} attempt #${attempt} waiting ${delayMs}ms`);
-});
-
-// Query live metrics snapshot
-console.log(runtime.stats());
-/*
-{
-  totalTasks: 42,
-  completedTasks: 40,
-  failedTasks: 2,
-  cancelledTasks: 0,
-  timedOutTasks: 0,
-  retriedTasks: 3,
-  activeExecutions: 2,
-  queuedTasks: 5,
-  activeWorkers: 4,
-  idleWorkers: 0,
-  totalWorkers: 4,
-  averageDurationMs: 84.5
-}
-*/
-```
-
----
-
-## 🏛️ Architecture
+## 🏛️ Architecture Overview
 
 ```text
                          Node.js Application
@@ -205,19 +270,19 @@ console.log(runtime.stats());
               ┌──────────────────┼──────────────────┐
               ▼                  ▼                  ▼
            Task API          Resource           Lifecycle
-                              Manager
+       (Task/CLI/Pipe)        Manager         (Drain Guard)
               │
               ▼
-         Task Registry
+        Middleware Chain (Onion Model)
               │
               ▼
-         Task Scheduler
+        Task Scheduler (Backpressure & Concurrency Limiter)
               │
               ▼
-         Priority Queue
+        Priority Queue (Heap + O(N) Dequeue Matching)
               │
               ▼
-       Execution Manager
+       Execution Manager (Timeout / Retry / Cancel)
               │
       ┌───────┼────────┐
       ▼       ▼        ▼
@@ -234,12 +299,13 @@ console.log(runtime.stats());
 
 ### `createRuntime(options?: RuntimeOptions): TaskRuntime`
 
-Creates a runtime instance with global settings:
-
 | Option | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `workers` | `number \| 'auto'` | `'auto'` | Worker thread count (auto calculates `availableParallelism - 1`) |
-| `maxConcurrency` | `number` | `Infinity` | Max tasks running concurrently across the runtime |
+| `maxConcurrency` | `number` | `0` (pool bounded) | Max tasks running concurrently across the runtime |
+| `maxQueueSize` | `number` | `0` (unlimited) | Max queue depth before triggering backpressure |
+| `overflowStrategy` | `'reject' \| 'drop_oldest'` | `'reject'` | Overflow strategy when `maxQueueSize` is exceeded |
+| `middlewares` | `TaskMiddleware[]` | `[]` | Global middleware interceptors |
 | `defaultTimeout` | `number` | `0` (disabled) | Default timeout in milliseconds |
 | `defaultRetry` | `number \| RetryOptions` | `undefined` | Global default retry configuration |
 | `defaultExecutor`| `'thread' \| 'process' \| 'cli'` | `'thread'` | Global default executor backend |
@@ -253,32 +319,37 @@ Creates a runtime instance with global settings:
 | `priority` | `number` | `0` | Numeric priority (higher dequeues first) |
 | `concurrency` | `number` | `Infinity` | Per-task concurrency limit |
 | `timeout` | `number` | `0` | Task execution timeout in milliseconds |
-| `retry` | `number \| RetryOptions` | `undefined` | Retry configuration (attempts, backoff, delay) |
+| `retry` | `number \| RetryOptions` | `undefined` | Retry configuration (attempts, backoff, delay, jitter) |
+| `middlewares` | `TaskMiddleware[]` | `[]` | Task-level middleware interceptors |
 | `executor` | `'thread' \| 'process' \| 'cli'` | `'thread'` | Executor backend |
 | `resource` | `ResourceLimits` | `undefined` | Resource limits (e.g. `maxMemoryMb`) |
 | `cwd` | `string` | `process.cwd()` | Working directory for CLI / Process |
 | `env` | `Record<string, string>` | `process.env` | Environment variables for CLI / Process |
 | `signal` | `AbortSignal` | `undefined` | External cancellation signal |
 
+### `RetryOptions`
+
+| Option | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `attempts` | `number` | Required | Total execution attempts (including initial run) |
+| `backoff` | `'fixed' \| 'linear' \| 'exponential'` | `'exponential'` | Backoff strategy |
+| `delay` | `number` | `100` | Initial base delay in milliseconds |
+| `maxDelay` | `number` | `30000` | Maximum cap on delay in milliseconds |
+| `jitter` | `boolean` | `false` | Enable Full Jitter to prevent retry storms |
+| `retryIf` | `(err: RuntimeError) => boolean` | `undefined` | Custom filter predicate |
+
 ---
 
 ## 🧪 Testing & Verification
 
-Run the full test suite (Unit tests + End-to-End integration tests):
-
 ```bash
+# Run test suite (114 unit & integration tests)
 pnpm test
-```
 
-Type check:
-
-```bash
+# Type checking
 pnpm typecheck
-```
 
-Build production bundle (ESM + CJS + DTS):
-
-```bash
+# Production build
 pnpm build
 ```
 

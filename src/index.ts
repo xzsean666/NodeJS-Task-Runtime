@@ -4,7 +4,7 @@
  * A unified, high-performance Task Execution Runtime for Node.js.
  */
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 
 // API Entrypoints
 export { createRuntime } from "./api/runtime.js";
@@ -21,6 +21,9 @@ export type {
   BackoffStrategy,
   RetryOptions,
   TaskOptions,
+  BatchOptions,
+  TaskMiddleware,
+  QueueOverflowStrategy,
   CliTaskOptions,
   TaskHandler,
   RuntimeOptions,
@@ -64,6 +67,7 @@ export {
   type RuntimeEventMap,
   type RuntimeEventName,
   type RuntimeEventListener,
+  type TaskProgressEvent,
 } from "./observability/events.js";
 export { MetricsCollector } from "./observability/metrics.js";
 export {

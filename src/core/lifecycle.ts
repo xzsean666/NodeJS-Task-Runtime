@@ -80,16 +80,29 @@ export class LifecycleManager {
     }
   }
 
+  private drainChecker?: () => boolean;
+
+  setDrainChecker(checker: () => boolean): void {
+    this.drainChecker = checker;
+  }
+
   registerExecution(context: ExecutionContext): void {
     this.activeExecutions.set(context.executionId, context);
   }
 
   unregisterExecution(context: ExecutionContext): void {
     this.activeExecutions.delete(context.executionId);
-    if (this._state === "draining" && this.activeExecutions.size === 0) {
-      if (this.drainPromiseResolve) {
-        this.drainPromiseResolve();
-      }
+    this.checkDrainStatus();
+  }
+
+  checkDrainStatus(): void {
+    if (this._state !== "draining") return;
+    const isDrained = this.drainChecker
+      ? this.drainChecker()
+      : this.activeExecutions.size === 0;
+
+    if (isDrained && this.drainPromiseResolve) {
+      this.drainPromiseResolve();
     }
   }
 
@@ -111,7 +124,11 @@ export class LifecycleManager {
       const timeout = timeoutMs ?? this.defaultShutdownTimeout;
       this.transitionTo("draining");
 
-      if (this.activeExecutions.size > 0) {
+      const isAlreadyDrained = this.drainChecker
+        ? this.drainChecker()
+        : this.activeExecutions.size === 0;
+
+      if (!isAlreadyDrained) {
         let timer: NodeJS.Timeout | undefined;
         const drainPromise = new Promise<void>((resolve) => {
           this.drainPromiseResolve = resolve;

@@ -23,19 +23,23 @@ export function createLinkedAbortController(...parentSignals: (AbortSignal | und
 
   const listeners: Array<{ signal: AbortSignal; handler: () => void }> = [];
 
+  const cleanup = () => {
+    while (listeners.length > 0) {
+      const entry = listeners.pop();
+      if (entry) {
+        entry.signal.removeEventListener("abort", entry.handler);
+      }
+    }
+  };
+
   for (const signal of validSignals) {
     const handler = () => {
+      cleanup();
       controller.abort(signal.reason);
     };
     signal.addEventListener("abort", handler, { once: true });
     listeners.push({ signal, handler });
   }
-
-  const cleanup = () => {
-    for (const { signal, handler } of listeners) {
-      signal.removeEventListener("abort", handler);
-    }
-  };
 
   return { controller, cleanup };
 }

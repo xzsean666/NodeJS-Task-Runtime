@@ -3,6 +3,6 @@ import { VERSION } from "../src/index.js";
 
 describe("Smoke Test", () => {
   it("should have valid VERSION", () => {
-    expect(VERSION).toBe("0.1.0");
+    expect(VERSION).toBe("0.2.0");
   });
 });

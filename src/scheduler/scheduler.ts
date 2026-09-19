@@ -20,6 +20,8 @@ export interface ScheduledTask<TInput = unknown, TOutput = unknown> {
 
 export interface TaskSchedulerOptions {
   maxConcurrency?: number;
+  maxQueueSize?: number;
+  overflowStrategy?: "reject" | "drop_oldest";
   eventEmitter?: RuntimeEventEmitter;
   lifecycleManager?: LifecycleManager;
 }
@@ -29,12 +31,17 @@ export class TaskScheduler {
   private readonly concurrency: ConcurrencyLimiter;
   private readonly eventEmitter?: RuntimeEventEmitter;
   private readonly lifecycleManager?: LifecycleManager;
+  private readonly maxQueueSize: number;
+  private readonly overflowStrategy: "reject" | "drop_oldest";
   private isDispatching = false;
+  private idleResolvers: Array<() => void> = [];
 
   constructor(options: TaskSchedulerOptions = {}) {
     this.concurrency = new ConcurrencyLimiter({ maxConcurrency: options.maxConcurrency });
     this.eventEmitter = options.eventEmitter;
     this.lifecycleManager = options.lifecycleManager;
+    this.maxQueueSize = options.maxQueueSize && options.maxQueueSize > 0 ? options.maxQueueSize : 0;
+    this.overflowStrategy = options.overflowStrategy ?? "reject";
   }
 
   get pendingCount(): number {
@@ -59,6 +66,24 @@ export class TaskScheduler {
     this.dispatch();
   }
 
+  async onIdle(): Promise<void> {
+    if (this.queue.isEmpty && this.concurrency.activeGlobal === 0) {
+      return;
+    }
+    return new Promise<void>((resolve) => {
+      this.idleResolvers.push(resolve);
+    });
+  }
+
+  private notifyIdle(): void {
+    if (this.queue.isEmpty && this.concurrency.activeGlobal === 0) {
+      while (this.idleResolvers.length > 0) {
+        const resolve = this.idleResolvers.shift();
+        resolve?.();
+      }
+    }
+  }
+
   submit<TInput, TOutput>(
     context: ExecutionContext<TInput, TOutput>,
     executor: Executor
@@ -76,6 +101,34 @@ export class TaskScheduler {
           executor: context.executorType,
         });
       return Promise.reject(err);
+    }
+
+    // Backpressure enforcement
+    if (this.maxQueueSize > 0 && this.queue.size >= this.maxQueueSize) {
+      if (this.overflowStrategy === "drop_oldest") {
+        const dropped = this.queue.dequeue();
+        if (dropped) {
+          dropped.cleanupQueueSignal?.();
+          dropped.reject(
+            new RuntimeError({
+              code: "QUEUE_FULL",
+              message: `Task dropped from queue due to queue limit (${this.maxQueueSize})`,
+              taskId: dropped.context.taskId,
+              executionId: dropped.context.executionId,
+              executor: dropped.context.executorType,
+            })
+          );
+        }
+      } else {
+        const overflowErr = new RuntimeError({
+          code: "QUEUE_FULL",
+          message: `Scheduler queue is full (max limit: ${this.maxQueueSize})`,
+          taskId: context.taskId,
+          executionId: context.executionId,
+          executor: context.executorType,
+        });
+        return Promise.reject(overflowErr);
+      }
     }
 
     return new Promise<TOutput>((resolve, reject) => {
@@ -148,35 +201,25 @@ export class TaskScheduler {
 
         let candidate: ScheduledTask<any, any> | undefined;
 
-        // Fast-path: top priority task can be acquired directly without full heap sort
+        // Fast-path: top priority task can be acquired directly
         const topTaskKey = top.context.taskName;
         const topTaskLimit = top.context.options.concurrency;
 
         if (this.concurrency.canAcquire(topTaskKey, topTaskLimit)) {
           candidate = this.queue.dequeue()!;
         } else {
-          // Slow-path: top item is limited by per-task concurrency; find first runnable candidate
-          const items = this.queue.toSortedArray();
-          let candidateIndex = -1;
+          // Slow-path: top item is limited by per-task concurrency; find highest-priority runnable candidate in O(N)
+          candidate = this.queue.dequeueMatching((item) => {
+            return this.concurrency.canAcquire(
+              item.context.taskName,
+              item.context.options.concurrency
+            );
+          });
 
-          for (let i = 1; i < items.length; i++) {
-            const item = items[i];
-            const taskKey = item.context.taskName;
-            const taskLimit = item.context.options.concurrency;
-
-            if (this.concurrency.canAcquire(taskKey, taskLimit)) {
-              candidateIndex = i;
-              break;
-            }
-          }
-
-          if (candidateIndex === -1) {
+          if (!candidate) {
             // No task currently can be acquired due to concurrency limits
             break;
           }
-
-          candidate = items[candidateIndex];
-          this.queue.remove((item) => item.context.executionId === candidate!.context.executionId);
         }
 
         candidate.cleanupQueueSignal?.();
@@ -226,6 +269,20 @@ export class TaskScheduler {
       const result = await executor.execute(context);
 
       if (context.status === "timed_out" || context.status === "cancelled") {
+        const cancelErr =
+          context.error ??
+          (context.status === "timed_out"
+            ? RuntimeError.timeout(context.options.timeout ?? 0, {
+                taskId: context.taskId,
+                executionId: context.executionId,
+                executor: context.executorType,
+              })
+            : RuntimeError.cancelled("Task cancelled", {
+                taskId: context.taskId,
+                executionId: context.executionId,
+                executor: context.executorType,
+              }));
+        reject(cancelErr);
         return;
       }
 
@@ -277,6 +334,7 @@ export class TaskScheduler {
     } finally {
       releaseConcurrency();
       this.lifecycleManager?.unregisterExecution(context);
+      this.notifyIdle();
       // Trigger dispatch on next tick to process waiting queue items
       process.nextTick(() => this.dispatch());
     }

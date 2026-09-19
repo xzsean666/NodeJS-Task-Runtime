@@ -47,7 +47,10 @@ export async function withTimeout<T>(
   });
 
   try {
-    const result = await Promise.race([action(controller.signal), timeoutPromise]);
+    const actionPromise = action(controller.signal);
+    // Attach noop catch to suppress UnhandledPromiseRejection if action rejects after timeout wins
+    actionPromise.catch(() => {});
+    const result = await Promise.race([actionPromise, timeoutPromise]);
     return result;
   } finally {
     if (timer) {

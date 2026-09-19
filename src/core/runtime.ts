@@ -10,6 +10,7 @@ import type {
   TaskHandler,
   ExecutorType,
   LifecycleState,
+  TaskMiddleware,
 } from "./types.js";
 import { LifecycleManager } from "./lifecycle.js";
 import { ExecutionContext } from "./execution.js";
@@ -18,14 +19,17 @@ import { randomUUID } from "node:crypto";
 import { ThreadExecutor } from "../executors/thread/executor.js";
 import { ProcessExecutor } from "../executors/process/executor.js";
 import { CLIExecutor } from "../executors/cli/executor.js";
-import { RuntimeEventEmitter, type RuntimeEventMap, type RuntimeEventListener } from "../observability/events.js";
+import {
+  RuntimeEventEmitter,
+  type RuntimeEventMap,
+  type RuntimeEventListener,
+} from "../observability/events.js";
 import { MetricsCollector } from "../observability/metrics.js";
 import { createTaskCallable, type TaskCallable } from "./task.js";
 import { withRetry } from "../execution/retry.js";
 import { withTimeout } from "../execution/timeout.js";
 import { normalizeRetryOptions } from "../execution/retry.js";
 import type { Executor } from "./executor.js";
-
 import { resolveWorkerCount } from "../resource/cpu.js";
 import type { Logger } from "../observability/logger.js";
 
@@ -35,6 +39,7 @@ export class TaskRuntime {
   private readonly lifecycle: LifecycleManager;
   private readonly metrics: MetricsCollector;
   private readonly scheduler: TaskScheduler;
+  private readonly middlewares: TaskMiddleware[] = [];
 
   private readonly threadExecutor: ThreadExecutor;
   private readonly processExecutor: ProcessExecutor;
@@ -49,6 +54,10 @@ export class TaskRuntime {
       this.bindLogger(options.logger);
     }
 
+    if (options.middlewares && options.middlewares.length > 0) {
+      this.middlewares.push(...options.middlewares);
+    }
+
     this.lifecycle = new LifecycleManager({
       eventEmitter: this.events,
       shutdownTimeout: options.shutdownTimeout,
@@ -58,13 +67,22 @@ export class TaskRuntime {
     const resolvedMaxConcurrency =
       options.maxConcurrency !== undefined
         ? options.maxConcurrency
-        : (options.defaultExecutor === "process" || options.defaultExecutor === "cli" ? 0 : defaultWorkerCount);
+        : options.defaultExecutor === "process" || options.defaultExecutor === "cli"
+        ? 0
+        : defaultWorkerCount;
 
     this.scheduler = new TaskScheduler({
       maxConcurrency: resolvedMaxConcurrency,
+      maxQueueSize: options.maxQueueSize,
+      overflowStrategy: options.overflowStrategy,
       eventEmitter: this.events,
       lifecycleManager: this.lifecycle,
     });
+
+    // Link scheduler idle status with lifecycle draining
+    this.lifecycle.setDrainChecker(
+      () => this.scheduler.pendingCount === 0 && this.scheduler.runningCount === 0
+    );
 
     this.threadExecutor = new ThreadExecutor(
       { size: defaultWorkerCount },
@@ -76,6 +94,21 @@ export class TaskRuntime {
 
   get state(): LifecycleState {
     return this.lifecycle.state;
+  }
+
+  /**
+   * Registers a global middleware executed around every task.
+   */
+  use(middleware: TaskMiddleware): this {
+    this.middlewares.push(middleware);
+    return this;
+  }
+
+  /**
+   * Dynamically resizes the worker thread pool.
+   */
+  resizeWorkers(newSize: number): void {
+    this.threadExecutor.resize(newSize);
   }
 
   task<TInput = unknown, TOutput = unknown>(
@@ -104,6 +137,11 @@ export class TaskRuntime {
 
       const rootTaskId = mergedOptions.taskId ?? `task_${randomUUID()}`;
 
+      const activeMiddlewares: TaskMiddleware[] = [
+        ...this.middlewares,
+        ...(mergedOptions.middlewares ?? []),
+      ];
+
       return withRetry(
         (attempt) => {
           const context = new ExecutionContext<TInput, TOutput>({
@@ -114,6 +152,9 @@ export class TaskRuntime {
             retryCount: attempt - 1,
             taskName: mergedOptions.name,
             priority: mergedOptions.priority,
+            onProgress: (progEvent) => {
+              this.events.emit("task:progress", progEvent);
+            },
           });
 
           // Attach handler function to context
@@ -127,28 +168,51 @@ export class TaskRuntime {
 
           const executor = this.getExecutor(executorType);
 
-          const execPromise = () => this.scheduler.submit(context, executor);
+          const coreExecution = () => {
+            const execPromise = () => this.scheduler.submit(context, executor);
 
-          if (timeoutMs > 0) {
-            return withTimeout(execPromise, {
-              timeoutMs,
-              taskId: context.taskId,
-              executionId: context.executionId,
-              executor: executorType,
-              onTimeout: async () => {
-                context.markTimedOut(timeoutMs);
-                this.events.emit("task:timeout", {
-                  taskId: context.taskId,
-                  executionId: context.executionId,
-                  taskName: mergedOptions.name,
-                  timeoutMs,
-                });
-                await executor.terminate(context.executionId, "Timeout");
-              },
-            });
+            if (timeoutMs > 0) {
+              return withTimeout(execPromise, {
+                timeoutMs,
+                taskId: context.taskId,
+                executionId: context.executionId,
+                executor: executorType,
+                onTimeout: async () => {
+                  context.markTimedOut(timeoutMs);
+                  this.events.emit("task:timeout", {
+                    taskId: context.taskId,
+                    executionId: context.executionId,
+                    taskName: mergedOptions.name,
+                    timeoutMs,
+                  });
+                  await executor.terminate(context.executionId, "Timeout");
+                },
+              });
+            }
+
+            return execPromise();
+          };
+
+          // Apply middleware chain if present
+          if (activeMiddlewares.length > 0) {
+            let index = -1;
+            const dispatchMiddleware = (i: number): Promise<TOutput> => {
+              if (i <= index) {
+                return Promise.reject(new Error("next() called multiple times in middleware"));
+              }
+              index = i;
+              if (i === activeMiddlewares.length) {
+                return coreExecution();
+              }
+              const fn = activeMiddlewares[i];
+              return Promise.resolve(
+                fn(context, () => dispatchMiddleware(i + 1))
+              );
+            };
+            return dispatchMiddleware(0);
           }
 
-          return execPromise();
+          return coreExecution();
         },
         retryOpts,
         (retryEvent) => {
@@ -183,6 +247,38 @@ export class TaskRuntime {
     };
 
     return this.task<TInput, TOutput>(command, fullOptions);
+  }
+
+  /**
+   * Chains multiple tasks into a sequential pipeline.
+   */
+  pipeline<T1, T2>(t1: TaskCallable<T1, T2>): TaskCallable<T1, T2>;
+  pipeline<T1, T2, T3>(
+    t1: TaskCallable<T1, T2>,
+    t2: TaskCallable<T2, T3>
+  ): TaskCallable<T1, T3>;
+  pipeline<T1, T2, T3, T4>(
+    t1: TaskCallable<T1, T2>,
+    t2: TaskCallable<T2, T3>,
+    t3: TaskCallable<T3, T4>
+  ): TaskCallable<T1, T4>;
+  pipeline(
+    ...tasks: Array<TaskCallable<any, any> | ((input: any) => any)>
+  ): TaskCallable<any, any> {
+    if (tasks.length === 0) {
+      throw new Error("Pipeline requires at least one task");
+    }
+
+    let current =
+      typeof tasks[0] === "function" && "batch" in tasks[0]
+        ? (tasks[0] as TaskCallable<any, any>)
+        : this.task(tasks[0] as any);
+
+    for (let i = 1; i < tasks.length; i++) {
+      current = current.pipe(tasks[i] as any);
+    }
+
+    return current;
   }
 
   async all<T>(tasks: Array<(() => Promise<T>) | Promise<T>>): Promise<T[]> {
@@ -238,20 +334,41 @@ export class TaskRuntime {
     this.events.on("lifecycle:change", ({ from, to }) => {
       logger.info(`Runtime lifecycle changed: ${from} -> ${to}`);
     });
-    this.events.on("task:start", ({ taskId, taskName, executor, retryCount }) => {
-      logger.debug(`Task started: [${taskId}] ${taskName ?? "anonymous"} (executor: ${executor}, attempt: ${retryCount + 1})`);
-    });
+    this.events.on(
+      "task:start",
+      ({ taskId, taskName, executor, retryCount }) => {
+        logger.debug(
+          `Task started: [${taskId}] ${taskName ?? "anonymous"} (executor: ${executor}, attempt: ${retryCount + 1})`
+        );
+      }
+    );
     this.events.on("task:complete", ({ taskId, taskName, durationMs }) => {
-      logger.debug(`Task completed: [${taskId}] ${taskName ?? "anonymous"} in ${durationMs}ms`);
+      logger.debug(
+        `Task completed: [${taskId}] ${taskName ?? "anonymous"} in ${durationMs}ms`
+      );
     });
     this.events.on("task:error", ({ taskId, taskName, error, durationMs }) => {
-      logger.error(`Task error: [${taskId}] ${taskName ?? "anonymous"} in ${durationMs}ms: ${error.message}`);
+      logger.error(
+        `Task error: [${taskId}] ${taskName ?? "anonymous"} in ${durationMs}ms: ${error.message}`
+      );
     });
     this.events.on("task:timeout", ({ taskId, taskName, timeoutMs }) => {
-      logger.warn(`Task timed out: [${taskId}] ${taskName ?? "anonymous"} after ${timeoutMs}ms`);
+      logger.warn(
+        `Task timed out: [${taskId}] ${taskName ?? "anonymous"} after ${timeoutMs}ms`
+      );
     });
-    this.events.on("task:retry", ({ taskId, taskName, attempt, delayMs, error }) => {
-      logger.warn(`Task retry: [${taskId}] ${taskName ?? "anonymous"} (attempt ${attempt}) waiting ${delayMs}ms due to: ${error.message}`);
+    this.events.on(
+      "task:retry",
+      ({ taskId, taskName, attempt, delayMs, error }) => {
+        logger.warn(
+          `Task retry: [${taskId}] ${taskName ?? "anonymous"} (attempt ${attempt}) waiting ${delayMs}ms due to: ${error.message}`
+        );
+      }
+    );
+    this.events.on("task:progress", ({ taskId, taskName, progress, message }) => {
+      logger.debug(
+        `Task progress: [${taskId}] ${taskName ?? "anonymous"}: ${progress}%${message ? ` - ${message}` : ""}`
+      );
     });
     this.events.on("worker:spawn", ({ workerId, type }) => {
       logger.debug(`Worker spawned: [${workerId}] (type: ${type})`);

@@ -26,6 +26,7 @@ export function normalizeRetryOptions(retry?: number | RetryOptions): RetryOptio
       backoff: retry.backoff ?? "exponential",
       delay: retry.delay ?? 100,
       maxDelay: retry.maxDelay ?? 30000,
+      jitter: retry.jitter ?? false,
       retryIf: retry.retryIf,
     };
   }
@@ -47,7 +48,12 @@ export function calculateBackoffDelay(attempt: number, options: RetryOptions): n
     delay = baseDelay * Math.pow(2, attempt - 1);
   }
 
-  return Math.min(delay, maxDelay);
+  const capped = Math.min(delay, maxDelay);
+  if (options.jitter) {
+    // Full Jitter: random between 0 and capped delay
+    return Math.floor(Math.random() * (capped + 1));
+  }
+  return capped;
 }
 
 export interface RetryEvent {
@@ -63,6 +69,10 @@ export async function withRetry<T>(
   onRetry?: (event: RetryEvent) => void,
   signal?: AbortSignal
 ): Promise<T> {
+  if (signal?.aborted) {
+    throw RuntimeError.cancelled(String(signal.reason ?? "Task cancelled before retry attempt"));
+  }
+
   const normalized = normalizeRetryOptions(options);
   if (!normalized || normalized.attempts <= 1) {
     return action(1);

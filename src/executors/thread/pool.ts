@@ -32,7 +32,7 @@ interface PendingExecution {
 }
 
 export class WorkerPool {
-  private readonly targetSize: number;
+  private targetSize: number;
   private readonly options: WorkerPoolOptions;
   private readonly eventEmitter?: RuntimeEventEmitter;
   private readonly workers = new Map<string, PooledWorker>();
@@ -48,6 +48,33 @@ export class WorkerPool {
 
   get size(): number {
     return this.targetSize;
+  }
+
+  /**
+   * Dynamically resizes the worker pool size.
+   */
+  resize(newSize: number): void {
+    if (this.isDestroyed) return;
+    const validated = Math.max(1, Math.floor(newSize));
+    this.targetSize = validated;
+
+    if (!this.isStarted) return;
+
+    // Scale up
+    while (this.workers.size < this.targetSize) {
+      this.spawnWorker();
+    }
+
+    // Scale down if necessary: terminate idle workers first
+    if (this.workers.size > this.targetSize) {
+      for (const [id, pw] of this.workers.entries()) {
+        if (this.workers.size <= this.targetSize) break;
+        if (!pw.busy) {
+          this.workers.delete(id);
+          pw.worker.terminate().catch(() => {});
+        }
+      }
+    }
   }
 
   get totalWorkers(): number {
@@ -256,6 +283,11 @@ export class WorkerPool {
     const reject = pooled.currentReject;
     const executionId = pooled.currentExecutionId;
     this.resetWorkerState(pooled);
+    this.workers.delete(pooled.id);
+
+    try {
+      pooled.worker.terminate().catch(() => {});
+    } catch {}
 
     if (reject) {
       reject(
@@ -265,6 +297,10 @@ export class WorkerPool {
           cause: err,
         })
       );
+    }
+
+    if (!this.isDestroyed && this.workers.size < this.targetSize) {
+      this.spawnWorker();
     }
   }
 

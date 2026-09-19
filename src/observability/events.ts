@@ -55,6 +55,16 @@ export interface TaskCancelEvent {
   reason?: string;
 }
 
+export interface TaskProgressEvent {
+  taskId: string;
+  executionId: string;
+  taskName?: string;
+  progress: number;
+  message?: string;
+  metadata?: Record<string, unknown>;
+  timestamp: number;
+}
+
 export interface TaskRetryEvent {
   taskId: string;
   executionId: string;
@@ -94,6 +104,7 @@ export interface RuntimeEventMap {
   "task:timeout": TaskTimeoutEvent;
   "task:cancel": TaskCancelEvent;
   "task:retry": TaskRetryEvent;
+  "task:progress": TaskProgressEvent;
   "worker:spawn": WorkerSpawnEvent;
   "worker:exit": WorkerExitEvent;
   "worker:crash": WorkerCrashEvent;

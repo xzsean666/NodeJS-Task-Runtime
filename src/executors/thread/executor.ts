@@ -2,6 +2,8 @@
  * ThreadExecutor implementation using Worker Threads and WorkerPool.
  */
 
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import type { Executor, ExecutorStats } from "../../core/executor.js";
 import type { ExecutionContext } from "../../core/execution.js";
 import { WorkerPool } from "./pool.js";
@@ -16,10 +18,26 @@ export class ThreadExecutor implements Executor {
     this.pool = new WorkerPool(options, eventEmitter);
   }
 
+  resize(newSize: number): void {
+    this.pool.resize(newSize);
+  }
+
   async execute<TInput, TOutput>(context: ExecutionContext<TInput, TOutput>): Promise<TOutput> {
     const fn = (context as any).handler ?? context.options.metadata?.fn;
-    const modulePath = context.options.metadata?.modulePath as string | undefined;
+    let modulePath = context.options.metadata?.modulePath as string | undefined;
     const exportName = context.options.metadata?.exportName as string | undefined;
+
+    if (modulePath && typeof modulePath === "string") {
+      try {
+        if (path.isAbsolute(modulePath)) {
+          modulePath = pathToFileURL(modulePath).href;
+        } else if (modulePath.startsWith(".") || modulePath.startsWith("/")) {
+          modulePath = pathToFileURL(path.resolve(context.options.cwd ?? process.cwd(), modulePath)).href;
+        }
+      } catch {
+        // Use raw modulePath if URL resolution fails
+      }
+    }
 
     const onAbort = () => {
       this.pool.terminateExecution(

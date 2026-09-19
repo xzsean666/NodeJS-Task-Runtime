@@ -53,6 +53,39 @@ export class PriorityQueue<T> implements Queue<T> {
     return this.heap.length > 0 ? this.heap[0].item : undefined;
   }
 
+  /**
+   * Dequeues the highest-priority item matching the predicate.
+   */
+  dequeueMatching(predicate: (item: T) => boolean): T | undefined {
+    if (this.heap.length === 0) return undefined;
+
+    // Fast-path: root matches
+    if (predicate(this.heap[0].item)) {
+      return this.dequeue();
+    }
+
+    // Search for best candidate among heap nodes
+    let bestIndex = -1;
+    for (let i = 1; i < this.heap.length; i++) {
+      if (predicate(this.heap[i].item)) {
+        if (bestIndex === -1 || this.compare(this.heap[i], this.heap[bestIndex]) < 0) {
+          bestIndex = i;
+        }
+      }
+    }
+
+    if (bestIndex === -1) return undefined;
+
+    const matchedItem = this.heap[bestIndex].item;
+    const last = this.heap.pop()!;
+    if (bestIndex < this.heap.length) {
+      this.heap[bestIndex] = last;
+      this.siftDown(bestIndex);
+      this.siftUp(bestIndex);
+    }
+    return matchedItem;
+  }
+
   clear(): void {
     this.heap = [];
     this.sequenceCounter = 0;

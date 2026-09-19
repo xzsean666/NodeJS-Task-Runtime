@@ -1,66 +1,33 @@
 # Session State
 
-- **Current Goal**: Node.js Task Runtime SDK MVP 开发
-- **Current Task**: [TASK-009](tasks/TASK-009.md)
+- **Current Goal**: Node.js Task Runtime 全面审计、缺陷修复与 v0.2.0 架构升级
+- **Current Task**: 全面代码审计、缺陷修复、架构优化与文档更新
 - **Current Status**: DONE
 - **Completed Work**:
-  - 完成 [TASK-001](tasks/TASK-001.md)：初始化工程骨架，配置 TypeScript、Vitest、tsup 双格式打包（ESM/CJS/DTS），完成 pnpm 依赖安装与冒烟测试通过
-  - 完成 [TASK-002](tasks/TASK-002.md)：定义核心类型，实现统一 RuntimeError 错误模型与 RuntimeEventEmitter 事件中心，单元测试 100% 通过
-  - 完成 [TASK-003](tasks/TASK-003.md)：实现 ExecutionContext 单次任务执行实体、Executor 契约接口以及 LifecycleManager 状态机与优雅停机（Graceful Shutdown），单元测试 100% 通过
-  - 完成 [TASK-004](tasks/TASK-004.md)：实现 PriorityQueue 高性能优先级堆队列、ConcurrencyLimiter 令牌控制器与 TaskScheduler 核心调度器，单元测试 100% 通过
-  - 完成 [TASK-005](tasks/TASK-005.md)：实现 CPU 自适应 Worker 检测、WorkerPool 线程池、内联 Worker 运行时与 Crash Detection & Auto Healing 自愈恢复，单元测试 100% 通过
-  - 完成 [TASK-006](tasks/TASK-006.md)：实现 CLIExecutor、ProcessExecutor、stdio 流协议、动态参数解析与进程非 0 / 信号异常处理，单元测试 100% 通过
-  - 完成 [TASK-007](tasks/TASK-007.md)：实现 withTimeout 超时拦截、withRetry 退避重试机制、createLinkedAbortController 取消管理与内存资源转换，单元测试 100% 通过
-  - 完成 [TASK-008](tasks/TASK-008.md)：实现 TaskRuntime 核心聚合调度、createRuntime 统一入口、task.batch / task.map / runtime.all 批处理与 MetricsCollector 统计指标，单元测试 100% 通过
-  - 完成 [TASK-009](tasks/TASK-009.md)：编写全面覆盖的 E2E 端到端集成测试、示例程序（`examples/basic.ts`, `examples/cli.ts`, `examples/batch.ts`）以及高质量 `README.md` 文档
-- **Modified / Created Files**:
-  - `src/index.ts`
-  - `src/core/types.ts`
-  - `src/core/execution.ts`
-  - `src/core/executor.ts`
-  - `src/core/lifecycle.ts`
-  - `src/core/task.ts`
-  - `src/core/runtime.ts`
-  - `src/api/runtime.ts`
-  - `src/api/task.ts`
-  - `src/api/cli.ts`
-  - `src/scheduler/queue.ts`
-  - `src/scheduler/priority-queue.ts`
-  - `src/scheduler/concurrency.ts`
-  - `src/scheduler/scheduler.ts`
-  - `src/executors/thread/types.ts`
-  - `src/executors/thread/worker-runtime.ts`
-  - `src/executors/thread/pool.ts`
-  - `src/executors/thread/executor.ts`
-  - `src/executors/process/executor.ts`
-  - `src/executors/cli/process.ts`
-  - `src/executors/cli/executor.ts`
-  - `src/resource/cpu.ts`
-  - `src/resource/memory.ts`
-  - `src/resource/limits.ts`
-  - `src/execution/error.ts`
-  - `src/execution/timeout.ts`
-  - `src/execution/retry.ts`
-  - `src/execution/cancellation.ts`
-  - `src/transport/json.ts`
-  - `src/transport/binary.ts`
-  - `src/transport/protocol.ts`
-  - `src/observability/events.ts`
-  - `src/observability/metrics.ts`
-  - `src/observability/logger.ts`
-  - `tests/e2e/runtime-e2e.test.ts`
-  - `examples/basic.ts`
-  - `examples/cli.ts`
-  - `examples/batch.ts`
-  - `README.md`
-  - `docs/AI/tasks/TASK-001.md` ~ `docs/AI/tasks/TASK-009.md`
-  - `docs/AI/TASK_INDEX.md`
-  - `docs/AI/SESSION_STATE.md`
+  - 全面代码审计与缺陷排查，修复 5 项核心与高危漏洞：
+    1. 修复 `TaskScheduler` 中任务取消/超时且执行器迟滞返回时 Promise 悬挂挂死漏洞
+    2. 修复 `withTimeout` 中任务在超时后延迟抛错引发 Node.js `unhandledRejection` 进程崩溃漏洞
+    3. 修复 `ProcessExecutor` 与 `runCliProcess` 中 `writeToStdin` 异常未杀死子进程导致的孤儿/僵尸进程泄露
+    4. 修复 `ThreadExecutor` 中相对路径 `modulePath` 在 `eval: true` 的 Worker 中无法导入的问题
+    5. 修复 `LifecycleManager` 优雅停机时仅根据出队任务判断导致队列排队任务被提前截断丢失的问题
+  - 架构与性能核心升级（v0.2.0）：
+    1. 引入洋葱模型中间件系统（`runtime.use(middleware)` & 任务级 `middlewares`）
+    2. 引入任务流水线与链式组合（`runtime.pipeline(...)` & `task.pipe(...)`）
+    3. 批处理能力升级：新增 `task.batchSettled()` 与窗口化并发控制 `batchConcurrency`
+    4. 任务实时进度汇报 API（`context.reportProgress()` 与 `task:progress` 事件）
+    5. 调度器反压与队列深度保护（`maxQueueSize` 与 `overflowStrategy: "reject" | "drop_oldest"`）
+    6. 调度器慢路径性能优化：实现 `PriorityQueue.dequeueMatching()` O(N) 原地堆匹配替代全排序
+    7. 退避重试加入工业级 Full Jitter 随机抖动，防止重试风暴与惊群效应
+    8. WorkerPool 动态弹性伸缩（`runtime.resizeWorkers(newSize)`）
+  - 全面更新测试与文档：
+    1. 编写包含 11 项高级特性和审计修复验证的新测试集 `tests/features/v2-enhancements.test.ts`
+    2. 全局 25 个测试文件、114 个测试用例 100% 通过
+    3. 更新 `package.json` 至 0.2.0 并完成 `tsup` 生产编译构建
+    4. 全面重写 `README.md` 与更新 `docs/AI/DECISIONS.md`
 - **Executed Verification Commands & Results**:
-  - `pnpm test`: 22 test files, 84 passed
+  - `pnpm test`: 25 test files, 114 passed (100%)
   - `pnpm typecheck`: 0 errors
-  - `pnpm build`: ESM/CJS/DTS built successfully
-  - `node dist/index.js test`: 100% verified
+  - `pnpm build`: 成功输出 ESM / CJS / DTS (dist/)
 - **Unresolved Issues**: None
 - **Risks & Assumptions**: None
 - **Next Task**: None (All planned MVP tasks TASK-001 ~ TASK-009 are complete)

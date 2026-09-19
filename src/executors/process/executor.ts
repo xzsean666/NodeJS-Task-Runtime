@@ -141,7 +141,17 @@ export class ProcessExecutor implements Executor {
         child.stdin.on("error", () => {
           // Suppress EPIPE errors if child process terminates early
         });
-        writeToStdin(child.stdin, payload, "json");
+        try {
+          writeToStdin(child.stdin, payload, "json");
+        } catch (err) {
+          try {
+            child.kill("SIGKILL");
+          } catch {}
+          cleanupSignal();
+          this.activeProcesses.delete(context.executionId);
+          reject(err);
+          return;
+        }
       }
 
       child.on("error", (err: Error) => {

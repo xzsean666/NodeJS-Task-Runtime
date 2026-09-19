@@ -64,6 +64,11 @@ export interface RetryOptions {
   maxDelay?: number;
 
   /**
+   * Enable randomized jitter to prevent thundering herds / retry storms. Default: false.
+   */
+  jitter?: boolean;
+
+  /**
    * Optional predicate to decide whether a given error should trigger a retry.
    */
   retryIf?: (error: RuntimeError) => boolean;
@@ -149,6 +154,11 @@ export interface TaskOptions<TInput = unknown> {
   stderr?: DataFormat;
 
   /**
+   * Task-level middlewares/interceptors executed around the task.
+   */
+  middlewares?: TaskMiddleware[];
+
+  /**
    * Custom metadata attached to task.
    */
   metadata?: Record<string, unknown>;
@@ -160,6 +170,30 @@ export interface TaskOptions<TInput = unknown> {
 export type TaskHandler<TInput = unknown, TOutput = unknown> = (
   input: TInput
 ) => Promise<TOutput> | TOutput;
+
+/**
+ * Task middleware / interceptor function signature.
+ */
+export type TaskMiddleware = (
+  context: any,
+  next: () => Promise<any>
+) => Promise<any>;
+
+/**
+ * Batch execution options.
+ */
+export interface BatchOptions<TInput = unknown> extends Partial<TaskOptions<TInput>> {
+  /**
+   * Maximum concurrent tasks executed simultaneously in this batch.
+   * Defaults to unbounded (scheduled via runtime/task concurrency limits).
+   */
+  batchConcurrency?: number;
+}
+
+/**
+ * Queue overflow handling strategy when queue reaches maxQueueSize.
+ */
+export type QueueOverflowStrategy = "reject" | "drop_oldest";
 
 /**
  * CLI Task definition options.
@@ -187,6 +221,17 @@ export interface RuntimeOptions {
   maxConcurrency?: number;
 
   /**
+   * Maximum scheduler queue size before triggering backpressure / overflow strategy.
+   * Default: 0 (unlimited queue depth).
+   */
+  maxQueueSize?: number;
+
+  /**
+   * Strategy when queue exceeds maxQueueSize ('reject' or 'drop_oldest'). Default: 'reject'.
+   */
+  overflowStrategy?: QueueOverflowStrategy;
+
+  /**
    * Global default timeout in milliseconds. Default: 0 (no timeout).
    */
   defaultTimeout?: number;
@@ -200,6 +245,11 @@ export interface RuntimeOptions {
    * Global default executor backend. Default: 'thread'.
    */
   defaultExecutor?: ExecutorType;
+
+  /**
+   * Global runtime middlewares applied to all tasks.
+   */
+  middlewares?: TaskMiddleware[];
 
   /**
    * Logger adapter.

@@ -1,6 +1,6 @@
 {
   "name": "node-task-runtime",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A simple, powerful and extensible task execution runtime for Node.js",
   "type": "module",
   "main": "./dist/index.cjs",
