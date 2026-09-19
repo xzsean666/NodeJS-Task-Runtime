@@ -7,6 +7,7 @@ import type {
   TaskOptions,
   CliTaskOptions,
   RuntimeStats,
+  ActiveTaskInfo,
   TaskHandler,
   ExecutorType,
   LifecycleState,
@@ -90,10 +91,21 @@ export class TaskRuntime {
     );
     this.processExecutor = new ProcessExecutor();
     this.cliExecutor = new CLIExecutor();
+
+    if (options.eager) {
+      this.warmup().catch(() => {});
+    }
   }
 
   get state(): LifecycleState {
     return this.lifecycle.state;
+  }
+
+  /**
+   * Pre-spawns all worker threads and waits until they are fully initialized and ready.
+   */
+  async warmup(): Promise<void> {
+    await this.threadExecutor.warmup();
   }
 
   /**
@@ -234,34 +246,70 @@ export class TaskRuntime {
   }
 
   cli<TInput = unknown, TOutput = unknown>(
-    command: string,
+    command: string | ((input: TInput, context: any) => string),
     cliOptions: CliTaskOptions<TInput> = { command }
   ): TaskCallable<TInput, TOutput> {
     const fullOptions: TaskOptions<TInput> = {
       ...cliOptions,
       executor: "cli",
+      command: cliOptions.command ?? command,
       metadata: {
         ...cliOptions.metadata,
-        command,
+        command: typeof command === "string" ? command : undefined,
       },
     };
 
-    return this.task<TInput, TOutput>(command, fullOptions);
+    return this.task<TInput, TOutput>(
+      typeof command === "string" ? command : "dynamic-cli",
+      fullOptions
+    );
   }
 
   /**
-   * Chains multiple tasks into a sequential pipeline.
+   * Chains multiple tasks or functions into a sequential pipeline with end-to-end type safety.
    */
-  pipeline<T1, T2>(t1: TaskCallable<T1, T2>): TaskCallable<T1, T2>;
+  pipeline<T1, T2>(
+    t1: TaskCallable<T1, T2> | ((arg: T1) => Promise<T2> | T2)
+  ): TaskCallable<T1, T2>;
   pipeline<T1, T2, T3>(
-    t1: TaskCallable<T1, T2>,
-    t2: TaskCallable<T2, T3>
+    t1: TaskCallable<T1, T2> | ((arg: T1) => Promise<T2> | T2),
+    t2: TaskCallable<T2, T3> | ((arg: T2) => Promise<T3> | T3)
   ): TaskCallable<T1, T3>;
   pipeline<T1, T2, T3, T4>(
-    t1: TaskCallable<T1, T2>,
-    t2: TaskCallable<T2, T3>,
-    t3: TaskCallable<T3, T4>
+    t1: TaskCallable<T1, T2> | ((arg: T1) => Promise<T2> | T2),
+    t2: TaskCallable<T2, T3> | ((arg: T2) => Promise<T3> | T3),
+    t3: TaskCallable<T3, T4> | ((arg: T3) => Promise<T4> | T4)
   ): TaskCallable<T1, T4>;
+  pipeline<T1, T2, T3, T4, T5>(
+    t1: TaskCallable<T1, T2> | ((arg: T1) => Promise<T2> | T2),
+    t2: TaskCallable<T2, T3> | ((arg: T2) => Promise<T3> | T3),
+    t3: TaskCallable<T3, T4> | ((arg: T3) => Promise<T4> | T4),
+    t4: TaskCallable<T4, T5> | ((arg: T4) => Promise<T5> | T5)
+  ): TaskCallable<T1, T5>;
+  pipeline<T1, T2, T3, T4, T5, T6>(
+    t1: TaskCallable<T1, T2> | ((arg: T1) => Promise<T2> | T2),
+    t2: TaskCallable<T2, T3> | ((arg: T2) => Promise<T3> | T3),
+    t3: TaskCallable<T3, T4> | ((arg: T3) => Promise<T4> | T4),
+    t4: TaskCallable<T4, T5> | ((arg: T4) => Promise<T5> | T5),
+    t5: TaskCallable<T5, T6> | ((arg: T5) => Promise<T6> | T6)
+  ): TaskCallable<T1, T6>;
+  pipeline<T1, T2, T3, T4, T5, T6, T7>(
+    t1: TaskCallable<T1, T2> | ((arg: T1) => Promise<T2> | T2),
+    t2: TaskCallable<T2, T3> | ((arg: T2) => Promise<T3> | T3),
+    t3: TaskCallable<T3, T4> | ((arg: T3) => Promise<T4> | T4),
+    t4: TaskCallable<T4, T5> | ((arg: T4) => Promise<T5> | T5),
+    t5: TaskCallable<T5, T6> | ((arg: T5) => Promise<T6> | T6),
+    t6: TaskCallable<T6, T7> | ((arg: T6) => Promise<T7> | T7)
+  ): TaskCallable<T1, T7>;
+  pipeline<T1, T2, T3, T4, T5, T6, T7, T8>(
+    t1: TaskCallable<T1, T2> | ((arg: T1) => Promise<T2> | T2),
+    t2: TaskCallable<T2, T3> | ((arg: T2) => Promise<T3> | T3),
+    t3: TaskCallable<T3, T4> | ((arg: T3) => Promise<T4> | T4),
+    t4: TaskCallable<T4, T5> | ((arg: T4) => Promise<T5> | T5),
+    t5: TaskCallable<T5, T6> | ((arg: T5) => Promise<T6> | T6),
+    t6: TaskCallable<T6, T7> | ((arg: T6) => Promise<T7> | T7),
+    t7: TaskCallable<T7, T8> | ((arg: T7) => Promise<T8> | T8)
+  ): TaskCallable<T1, T8>;
   pipeline(
     ...tasks: Array<TaskCallable<any, any> | ((input: any) => any)>
   ): TaskCallable<any, any> {
@@ -289,6 +337,24 @@ export class TaskRuntime {
   stats(): RuntimeStats {
     const threadStats = this.threadExecutor.stats();
     return this.metrics.getStats(threadStats);
+  }
+
+  /**
+   * Returns a real-time snapshot of all currently active task executions.
+   */
+  getActiveTasks(): ActiveTaskInfo[] {
+    const executions = this.lifecycle.getActiveExecutions();
+    return executions.map((ctx) => ({
+      taskId: ctx.taskId,
+      executionId: ctx.executionId,
+      taskName: ctx.taskName,
+      executor: ctx.executorType,
+      status: ctx.status,
+      durationMs: ctx.startedAt ? Date.now() - ctx.startedAt : 0,
+      progress: ctx.progress,
+      priority: ctx.priority,
+      retryCount: ctx.retryCount,
+    }));
   }
 
   on<K extends keyof RuntimeEventMap>(

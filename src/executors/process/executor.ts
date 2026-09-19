@@ -106,9 +106,46 @@ export class ProcessExecutor implements Executor {
 
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
+      const maxBuffer =
+        context.options.maxBuffer ??
+        (context.options.metadata?.maxBuffer as number | undefined) ??
+        10 * 1024 * 1024;
+      let totalBytes = 0;
+      let overflow = false;
 
-      child.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
-      child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+      child.stdout?.on("data", (chunk: Buffer) => {
+        totalBytes += chunk.length;
+        if (totalBytes > maxBuffer && !overflow) {
+          overflow = true;
+          try {
+            child.kill("SIGKILL");
+          } catch {}
+          return;
+        }
+        stdoutChunks.push(chunk);
+        if (typeof (context.options as any).onStdout === "function") {
+          try {
+            (context.options as any).onStdout(chunk);
+          } catch {}
+        }
+      });
+
+      child.stderr?.on("data", (chunk: Buffer) => {
+        totalBytes += chunk.length;
+        if (totalBytes > maxBuffer && !overflow) {
+          overflow = true;
+          try {
+            child.kill("SIGKILL");
+          } catch {}
+          return;
+        }
+        stderrChunks.push(chunk);
+        if (typeof (context.options as any).onStderr === "function") {
+          try {
+            (context.options as any).onStderr(chunk);
+          } catch {}
+        }
+      });
 
       let killTimer: NodeJS.Timeout | undefined;
       const onAbort = () => {
@@ -119,6 +156,7 @@ export class ProcessExecutor implements Executor {
               child.kill("SIGKILL");
             } catch {}
           }, 1000);
+          killTimer?.unref();
         } catch {}
       };
 
@@ -176,6 +214,18 @@ export class ProcessExecutor implements Executor {
         const stdoutBuffer = Buffer.concat(stdoutChunks);
         const stderrBuffer = Buffer.concat(stderrChunks);
         const stderrStr = stderrBuffer.toString("utf-8").trim();
+
+        if (overflow) {
+          reject(
+            RuntimeError.bufferOverflow(maxBuffer, {
+              taskId: context.taskId,
+              executionId: context.executionId,
+              executor: "process",
+              stderr: stderrStr,
+            })
+          );
+          return;
+        }
 
         if (exitCode !== 0 || signal) {
           if (context.isAborted) {

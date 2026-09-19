@@ -45,15 +45,29 @@ if (parentPort) {
         }
 
         const result = await fn(input);
+        let returnTransfers = [];
+        if (result instanceof ArrayBuffer) {
+          returnTransfers = [result];
+        } else if (result && typeof result === "object" && Array.isArray(result.__transferList)) {
+          returnTransfers = result.__transferList;
+          delete result.__transferList;
+        }
+
         parentPort.postMessage({
           type: "SUCCESS",
           executionId,
           result,
-        });
+        }, returnTransfers);
       } catch (err) {
+        let msg = err && err.message ? String(err.message) : String(err);
+        const name = err && err.name ? String(err.name) : "Error";
+        if (fnCode && (name === "ReferenceError" || msg.includes("is not defined"))) {
+          msg += " (Hint: Inline functions in Worker Threads cannot access outer scope variables, closures, or imports. Pass values via task input, or use modulePath for file-based modules.)";
+        }
+
         const error = {
-          name: err && err.name ? String(err.name) : "Error",
-          message: err && err.message ? String(err.message) : String(err),
+          name,
+          message: msg,
           stack: err && err.stack ? String(err.stack) : undefined,
           code: err && err.code ? String(err.code) : undefined,
         };

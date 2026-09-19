@@ -51,4 +51,5 @@ export interface WorkerExecutionPayload {
   modulePath?: string;
   exportName?: string;
   input: unknown;
+  transferList?: readonly any[];
 }

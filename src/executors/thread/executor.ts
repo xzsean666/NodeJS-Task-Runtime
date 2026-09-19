@@ -22,6 +22,10 @@ export class ThreadExecutor implements Executor {
     this.pool.resize(newSize);
   }
 
+  async warmup(): Promise<void> {
+    await this.pool.warmup();
+  }
+
   async execute<TInput, TOutput>(context: ExecutionContext<TInput, TOutput>): Promise<TOutput> {
     const fn = (context as any).handler ?? context.options.metadata?.fn;
     let modulePath = context.options.metadata?.modulePath as string | undefined;
@@ -58,6 +62,7 @@ export class ThreadExecutor implements Executor {
           modulePath,
           exportName,
           input: context.input,
+          transferList: context.options.transferList,
         },
         context.signal
       );

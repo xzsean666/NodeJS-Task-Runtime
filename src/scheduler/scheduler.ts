@@ -344,9 +344,11 @@ export class TaskScheduler {
     while (!this.queue.isEmpty) {
       const item = this.queue.dequeue();
       if (item) {
+        item.cleanupQueueSignal?.();
         const err = item.context.markCancelled(reason);
         item.reject(err);
       }
     }
+    this.notifyIdle();
   }
 }

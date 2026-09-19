@@ -50,3 +50,39 @@
 - **背景**: 原有逻辑仅等待已出队任务完成，导致排队中任务直接被截断丢失。
 - **状态**: Accepted
 
+## DECISION-011: Worker 线程零拷贝 (Transferable Objects) 与闭包诊断
+- **决策**: 支持在任务调用时通过 `transferList` 转移 `ArrayBuffer` 等 Transferable 对象所有权；Worker 内部返回结果自动识别 `ArrayBuffer` 零拷贝转移。针对 Worker 内联函数抛出 `ReferenceError` 自动追加闭包作用域诊断提示。
+- **背景**: 避免大型二进制数据深拷贝的性能开销，并提升开发者面对 Worker 闭包陷阱时的排障效率。
+- **状态**: Accepted
+
+## DECISION-012: CLI / Process 缓冲区保护 (maxBuffer) 与实时流式回调 (onStdout/onStderr)
+- **决策**: 默认设置 10MB 缓冲区上限 `maxBuffer`，超出时抛出 `BUFFER_OVERFLOW` 错误并终止子进程；提供 `onStdout` 与 `onStderr` 实时 chunk 回调。
+- **背景**: 防止高吞吐或长日志 CLI 程序导致主进程内存无限激增导致 OOM，同时支持调用方实时处理流式日志。
+- **状态**: Accepted
+
+## DECISION-013: 跨版本 CI/CD 流水线 (仅配置不主动触发)
+- **决策**: 创建 GitHub Actions 工作流 `.github/workflows/ci.yml`，对 Node.js 18.x, 20.x, 22.x 进行矩阵自动化测试、覆盖率检查和构建验证，严格遵循用户指令不主动 push / 触发。
+- **背景**: 验证 SDK 在现代 Node.js 各 LTS 版本下的兼容性。
+- **状态**: Accepted
+
+## DECISION-014: 托管临时文件机制与自动防泄露清理 (Managed Temp Files)
+- **决策**: 在 `ExecutionContext` 提供 `ctx.createTempFile()` 与 `ctx.createTempDir()`，并引入 `autoCleanTemp: "on_error" | "always" | false`（默认 `"on_error"`）。任务异常或取消时自动物理清理临时文件，成功时保留供调用端读取。
+- **背景**: CLI 与 Worker 任务高频读写磁盘，手动创建和清理极易遗漏引发磁盘耗尽，托管机制彻底杜绝临时文件泄露。
+- **状态**: Accepted
+
+## DECISION-015: 动态 CLI 构造与实时任务观测探针 (Inspector)
+- **决策**: CLI 任务支持动态 `command(input, ctx)` 与 `args(input, ctx)`；Runtime 提供 `getActiveTasks()` 实时快照 API 与 `warmup()` / `eager: true` 预热能力。
+- **背景**: 满足复杂命令行拼装需求（如携带动态临时文件参数），并为 APM 监控与健康检查（`/healthz`、`/metrics`）提供原生探针支持。
+- **状态**: Accepted
+
+## DECISION-016: WorkerPool 状态同步与等待队列即时取消 (Worker Pool State Sync & Fast Abort)
+- **决策**: 在 WorkerPool 中，worker 崩溃、退出、缩容或被销毁时同步清理 `readyWorkers` 集合，杜绝残存 ID 导致的内存泄露与预热判定失真；对排队中的任务监听 `AbortSignal`，收到取消事件立即出队并 reject，无需等待轮空。
+- **背景**: 严防高并发及频繁增缩容/故障恢复场景下的状态不同步与排队延迟。
+- **状态**: Accepted
+
+## DECISION-017: 并发批处理短路与排空状态机防护 (Batch Early-Exit & Lifecycle Drain Guard)
+- **决策**: 在 `runWithConcurrencyLimit` 引入 `hasError` 短路标志，批处理中一旦有子任务失败立即停止认领后续未执行项；在 `LifecycleManager` 中严格禁止在 `draining`（排空中）状态重新调用 `start()`。
+- **背景**: 节约异常场景下的系统计算与 I/O 资源，确保运行时生命周期状态机的一致性与单向不可逆。
+- **状态**: Accepted
+
+

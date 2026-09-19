@@ -23,10 +23,10 @@ export class CLIExecutor implements Executor {
       context.options.metadata?.command ??
       this.defaultCommand;
 
-    if (!command || typeof command !== "string") {
+    if (!command || (typeof command !== "string" && typeof command !== "function")) {
       throw new RuntimeError({
         code: RuntimeErrorCode.INVALID_ARGUMENT,
-        message: "No command specified for CLI execution",
+        message: "No command or command resolver specified for CLI execution",
         taskId: context.taskId,
         executionId: context.executionId,
         executor: "cli",

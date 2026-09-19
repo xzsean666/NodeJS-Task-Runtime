@@ -2,7 +2,7 @@
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9+-blue.svg)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-114%20Passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-126%20Passing-brightgreen.svg)]()
 [![Version](https://img.shields.io/badge/Version-0.2.0-orange.svg)]()
 
 A simple, unified, enterprise-grade **Task Execution Runtime** for Node.js.
@@ -20,16 +20,19 @@ A simple, unified, enterprise-grade **Task Execution Runtime** for Node.js.
 
 ## ✨ Key Features
 
-- 🧵 **Worker Threads Pool**: Zero-configuration worker thread execution with automated CPU-core sensing (`workers: "auto"`), lazy worker initialization, and dynamic runtime pool resizing (`runtime.resizeWorkers(n)`).
-- 💻 **Unified CLI & Child Process Execution**: Seamlessly invoke external binaries, CLI tools (FFmpeg, Rust/Go utilities, shell scripts) with automatic argument mapping, stdin/stdout formatters (JSON/string/binary/pipe), and zombie process prevention.
+- 🧵 **Worker Threads Pool**: Zero-configuration worker thread execution with automated CPU-core sensing (`workers: "auto"`), lazy worker initialization, dynamic runtime pool resizing (`runtime.resizeWorkers(n)`), and server prewarming (`runtime.warmup()`, `eager: true`).
+- ⚡ **Zero-Copy Transferable Objects**: Transfer `ArrayBuffer` and `MessagePort` ownership seamlessly (`transferList: [buf]`) without expensive structured clone memory copying.
+- 💻 **Unified CLI & Child Process Execution**: Seamlessly invoke external binaries, CLI tools (FFmpeg, Rust/Go utilities, shell scripts) with dynamic argument/command mapping, stdin/stdout formatters (JSON/string/binary/pipe), and zombie process prevention.
+- 📁 **Managed Temp Files & Directories**: Built-in scratch workspace (`context.createTempFile()`, `context.createTempDir()`) with automatic leak protection (`autoCleanTemp: "on_error" | "always"`).
+- 🛡️ **Stdio Buffer Protection & Live Streaming**: Prevent OOM with configurable `maxBuffer` limits, and hook into stdout/stderr in real-time via `onStdout` and `onStderr`.
 - ⚡ **Priority Queue & Concurrency Control**: Stable FIFO priority scheduling, per-task and global concurrency bounds, and an optimized $O(N)$ selective dequeuing algorithm.
 - 🛡️ **Crash Recovery & Auto-Healing**: Immediate detection of worker crashes or process errors with automatic worker replacement and isolated task error propagation.
 - ⏱️ **Execution Controls & Jitter**: Built-in timeout enforcement, configurable retry strategies (fixed, linear, exponential backoff) with **Full Jitter** support to prevent retry storms, and standard `AbortSignal` cancellation.
 - 🧅 **Onion-Model Middlewares**: Register runtime-wide and task-level interceptors (`runtime.use(middleware)`) for APM logging, validation, distributed tracing, and metrics.
-- 🔗 **Task Pipeline & Chaining**: Chain tasks seamlessly using `runtime.pipeline(t1, t2, t3)` or `task.pipe(nextTask)`.
+- 🔗 **Task Pipeline & Chaining**: Chain tasks and functions seamlessly using `runtime.pipeline(t1, t2, ...)` or `task.pipe(nextTask)` with deep TypeScript type-inference.
 - 📦 **Advanced Batch Processing**: Execute batches with `task.batch()` (fail-fast) or `task.batchSettled()` (fault-tolerant `PromiseSettledResult`), with optional `batchConcurrency` windowing.
 - 🚦 **Backpressure & Queue Overflow Protection**: Configure `maxQueueSize` with `overflowStrategy: "reject" | "drop_oldest"` to prevent memory exhaustion under high ingest rates.
-- 📈 **Real-Time Progress Reporting**: Long-running tasks can report execution progress via `context.reportProgress(percent, msg)`, triggering `"task:progress"` events.
+- 📈 **Real-Time Progress Reporting & Task Inspector**: Long-running tasks report execution progress via `context.reportProgress(percent, msg)`. Live inspection of active running tasks via `runtime.getActiveTasks()`.
 - 📊 **Full Observability & Metrics**: Real-time runtime statistics (`runtime.stats()`), execution durations, event emitter (`task:queued`, `task:start`, `task:progress`, `task:complete`, `task:error`, `task:retry`, `worker:spawn`, `worker:crash`, `lifecycle:change`), and logger adapters.
 - 🛑 **Graceful Shutdown**: Safely drain both active and pending queued tasks before shutting down, with configurable timeout fallback.
 
@@ -257,6 +260,103 @@ runtime.use(async (ctx, next) => {
 
 ---
 
+### 9. Zero-Copy Transferable Objects (Worker Threads)
+
+```typescript
+import { createRuntime } from "node-task-runtime";
+
+const runtime = createRuntime();
+
+const processBuffer = runtime.task((data: { buffer: ArrayBuffer }) => {
+  const view = new Uint8Array(data.buffer);
+  // Perform in-place heavy computation
+  for (let i = 0; i < view.length; i++) view[i] ^= 0x42;
+  return data.buffer; // Returning ArrayBuffer automatically transfers ownership back
+});
+
+const buffer = new ArrayBuffer(1024 * 1024 * 64); // 64MB buffer
+
+// Zero-copy transfer: memory ownership is moved without memory cloning
+const result = await processBuffer(
+  { buffer },
+  { transferList: [buffer] }
+);
+// In the caller thread, buffer.byteLength is now 0 (detached)
+```
+
+> [!NOTE]
+> **Worker Threads & Closures**: Functions executed inline in worker threads cannot capture outer closures or variables.
+> Always pass parameters via `input`, or use `runtime.task("./path/to/module.js")` (`modulePath`) to import tasks from files.
+
+---
+
+### 10. CLI Real-Time Streaming & Buffer Protection
+
+```typescript
+import { createRuntime } from "node-task-runtime";
+
+const runtime = createRuntime();
+
+const ffmpegTranscode = runtime.cli("ffmpeg", {
+  name: "transcode",
+  args: (input: { file: string }) => ["-i", input.file, "-f", "null", "-"],
+  maxBuffer: 50 * 1024 * 1024, // 50MB max buffer limit to prevent OOM
+  onStderr: (chunk) => {
+    // Real-time parsing of FFmpeg progress logs
+    process.stdout.write(`[Live Log] ${chunk.toString()}`);
+  },
+});
+```
+
+---
+
+### 11. Managed Temp Files & Scratch Workspace
+
+```typescript
+import { createRuntime } from "node-task-runtime";
+import fs from "node:fs/promises";
+
+const runtime = createRuntime();
+
+const transcodeTask = runtime.cli<{ videoUrl: string }, { outputVideo: string }>(
+  "ffmpeg",
+  {
+    name: "video-transcoder",
+    args: (input, ctx) => {
+      // Create managed temporary files on disk
+      const tempOutput = ctx.createTempFile(".mp4");
+      return ["-i", input.videoUrl, "-c:v", "libx264", tempOutput];
+    },
+    // "on_error" (default): automatically deletes temp files if task fails/aborts
+    // "always": deletes temp files upon completion regardless of outcome
+    // false: keeps temp files intact
+    autoCleanTemp: "on_error",
+  }
+);
+```
+
+---
+
+### 12. Server Prewarming & Active Tasks Inspector
+
+```typescript
+import { createRuntime } from "node-task-runtime";
+
+// Eager initialization on server startup
+const runtime = createRuntime({ workers: 4, eager: true });
+
+// Or manually prewarm workers
+await runtime.warmup();
+
+// Real-time snapshot of active running tasks (ideal for /metrics or /healthz endpoints)
+const active = runtime.getActiveTasks();
+active.forEach((task) => {
+  console.log(`[Running] ${task.taskName} (${task.taskId}) - duration: ${task.durationMs}ms, progress: ${task.progress}%`);
+});
+```
+
+---
+
 ## 🏛️ Architecture Overview
 
 ```text
@@ -302,6 +402,7 @@ runtime.use(async (ctx, next) => {
 | Option | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `workers` | `number \| 'auto'` | `'auto'` | Worker thread count (auto calculates `availableParallelism - 1`) |
+| `eager` | `boolean` | `false` | Pre-spawns worker threads eagerly during runtime initialization |
 | `maxConcurrency` | `number` | `0` (pool bounded) | Max tasks running concurrently across the runtime |
 | `maxQueueSize` | `number` | `0` (unlimited) | Max queue depth before triggering backpressure |
 | `overflowStrategy` | `'reject' \| 'drop_oldest'` | `'reject'` | Overflow strategy when `maxQueueSize` is exceeded |
@@ -326,6 +427,11 @@ runtime.use(async (ctx, next) => {
 | `cwd` | `string` | `process.cwd()` | Working directory for CLI / Process |
 | `env` | `Record<string, string>` | `process.env` | Environment variables for CLI / Process |
 | `signal` | `AbortSignal` | `undefined` | External cancellation signal |
+| `transferList` | `ArrayBuffer[]` | `undefined` | Transferable objects for zero-copy memory transfer in Worker Threads |
+| `maxBuffer` | `number` | `10485760` (10MB) | Max buffer limit in bytes for CLI/Process stdout/stderr before aborting |
+| `autoCleanTemp` | `boolean \| 'on_error' \| 'always'` | `'on_error'` | Automatic cleanup policy for temp files created via `ctx.createTempFile()` |
+| `onStdout` | `(chunk: Buffer) => void` | `undefined` | Real-time stdout stream tap callback |
+| `onStderr` | `(chunk: Buffer) => void` | `undefined` | Real-time stderr stream tap callback |
 
 ### `RetryOptions`
 
@@ -343,7 +449,7 @@ runtime.use(async (ctx, next) => {
 ## 🧪 Testing & Verification
 
 ```bash
-# Run test suite (114 unit & integration tests)
+# Run test suite (126 unit & integration tests)
 pnpm test
 
 # Type checking

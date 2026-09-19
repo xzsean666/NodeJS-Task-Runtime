@@ -19,16 +19,38 @@ export interface CliProcessOptions {
 
 export function runCliProcess<TInput = unknown, TOutput = unknown>(
   context: ExecutionContext<TInput, TOutput>,
-  command: string,
+  command: string | ((input: TInput, context: ExecutionContext<TInput, TOutput>) => string),
   onSpawn?: (child: ChildProcess) => void
 ): Promise<TOutput> {
   return new Promise<TOutput>((resolve, reject) => {
     const options = context.options;
+    let resolvedCommand: string;
+
+    if (typeof command === "function") {
+      try {
+        resolvedCommand = command(context.input, context);
+      } catch (err) {
+        reject(
+          new RuntimeError({
+            code: RuntimeErrorCode.INVALID_ARGUMENT,
+            message: `Failed to evaluate dynamic CLI command: ${err instanceof Error ? err.message : String(err)}`,
+            taskId: context.taskId,
+            executionId: context.executionId,
+            executor: "cli",
+            cause: err,
+          })
+        );
+        return;
+      }
+    } else {
+      resolvedCommand = command;
+    }
+
     let resolvedArgs: string[] = [];
 
     if (typeof options.args === "function") {
       try {
-        resolvedArgs = options.args(context.input);
+        resolvedArgs = (options.args as any)(context.input, context);
       } catch (err) {
         reject(
           new RuntimeError({
@@ -56,7 +78,7 @@ export function runCliProcess<TInput = unknown, TOutput = unknown>(
 
     let child: ChildProcess;
     try {
-      child = spawn(command, resolvedArgs, {
+      child = spawn(resolvedCommand, resolvedArgs, {
         cwd,
         env,
         stdio: [stdinMode, stdoutMode, stderrMode],
@@ -66,7 +88,7 @@ export function runCliProcess<TInput = unknown, TOutput = unknown>(
       reject(
         new RuntimeError({
           code: RuntimeErrorCode.PROCESS_FAILED,
-          message: `Failed to spawn command '${command}': ${err.message}`,
+          message: `Failed to spawn command '${resolvedCommand}': ${err.message}`,
           taskId: context.taskId,
           executionId: context.executionId,
           executor: "cli",
@@ -82,16 +104,48 @@ export function runCliProcess<TInput = unknown, TOutput = unknown>(
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
+    const maxBuffer =
+      options.maxBuffer ??
+      (options.metadata?.maxBuffer as number | undefined) ??
+      10 * 1024 * 1024;
+    let totalBytes = 0;
+    let overflow = false;
 
     if (child.stdout) {
       child.stdout.on("data", (chunk: Buffer) => {
+        totalBytes += chunk.length;
+        if (totalBytes > maxBuffer && !overflow) {
+          overflow = true;
+          try {
+            child.kill("SIGKILL");
+          } catch {}
+          return;
+        }
         stdoutChunks.push(chunk);
+        if (typeof (options as any).onStdout === "function") {
+          try {
+            (options as any).onStdout(chunk);
+          } catch {}
+        }
       });
     }
 
     if (child.stderr) {
       child.stderr.on("data", (chunk: Buffer) => {
+        totalBytes += chunk.length;
+        if (totalBytes > maxBuffer && !overflow) {
+          overflow = true;
+          try {
+            child.kill("SIGKILL");
+          } catch {}
+          return;
+        }
         stderrChunks.push(chunk);
+        if (typeof (options as any).onStderr === "function") {
+          try {
+            (options as any).onStderr(chunk);
+          } catch {}
+        }
       });
     }
 
@@ -107,6 +161,7 @@ export function runCliProcess<TInput = unknown, TOutput = unknown>(
             // ignore
           }
         }, 1000);
+        killTimer?.unref();
       } catch {
         // ignore
       }
@@ -166,6 +221,18 @@ export function runCliProcess<TInput = unknown, TOutput = unknown>(
       const stdoutBuffer = Buffer.concat(stdoutChunks);
       const stderrBuffer = Buffer.concat(stderrChunks);
       const stderrStr = stderrBuffer.toString("utf-8").trim();
+
+      if (overflow) {
+        reject(
+          RuntimeError.bufferOverflow(maxBuffer, {
+            taskId: context.taskId,
+            executionId: context.executionId,
+            executor: "cli",
+            stderr: stderrStr,
+          })
+        );
+        return;
+      }
 
       if (exitCode !== 0 || signal) {
         if (context.isAborted) {

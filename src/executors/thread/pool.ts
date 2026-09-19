@@ -36,7 +36,9 @@ export class WorkerPool {
   private readonly options: WorkerPoolOptions;
   private readonly eventEmitter?: RuntimeEventEmitter;
   private readonly workers = new Map<string, PooledWorker>();
+  private readonly readyWorkers = new Set<string>();
   private readonly waitQueue: PendingExecution[] = [];
+  private readonly warmupResolvers: Array<() => void> = [];
   private isDestroyed = false;
   private isStarted = false;
 
@@ -70,6 +72,7 @@ export class WorkerPool {
       for (const [id, pw] of this.workers.entries()) {
         if (this.workers.size <= this.targetSize) break;
         if (!pw.busy) {
+          this.readyWorkers.delete(id);
           this.workers.delete(id);
           pw.worker.terminate().catch(() => {});
         }
@@ -106,6 +109,32 @@ export class WorkerPool {
     }
   }
 
+  /**
+   * Pre-spawns all target workers and waits until all workers are initialized and ready.
+   */
+  async warmup(): Promise<void> {
+    if (this.isDestroyed) return;
+    if (!this.isStarted) {
+      this.start();
+    }
+    if (this.readyWorkers.size >= this.targetSize) {
+      return;
+    }
+    return new Promise((resolve) => {
+      this.warmupResolvers.push(resolve);
+      this.checkWarmup();
+    });
+  }
+
+  private checkWarmup(): void {
+    if (this.readyWorkers.size >= this.targetSize || this.isDestroyed) {
+      while (this.warmupResolvers.length > 0) {
+        const resolve = this.warmupResolvers.shift();
+        resolve?.();
+      }
+    }
+  }
+
   async execute(payload: WorkerExecutionPayload, signal?: AbortSignal): Promise<unknown> {
     if (this.isDestroyed) {
       throw RuntimeError.runtimeStopped("Worker pool is destroyed");
@@ -116,16 +145,43 @@ export class WorkerPool {
     }
 
     return new Promise((resolve, reject) => {
+      let cleanupSignal: (() => void) | undefined;
       const pending: PendingExecution = {
         payload,
-        resolve,
-        reject,
+        resolve: (val) => {
+          cleanupSignal?.();
+          resolve(val);
+        },
+        reject: (err) => {
+          cleanupSignal?.();
+          reject(err);
+        },
         signal,
       };
 
       if (signal?.aborted) {
         reject(RuntimeError.cancelled(String(signal.reason ?? "Aborted before dispatch")));
         return;
+      }
+
+      if (signal) {
+        const onAbort = () => {
+          const idx = this.waitQueue.indexOf(pending);
+          if (idx !== -1) {
+            this.waitQueue.splice(idx, 1);
+            cleanupSignal?.();
+            reject(
+              RuntimeError.cancelled(String(signal.reason ?? "Aborted while queued in worker pool"), {
+                executionId: payload.executionId,
+                executor: "thread",
+              })
+            );
+          }
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        cleanupSignal = () => {
+          signal.removeEventListener("abort", onAbort);
+        };
       }
 
       this.waitQueue.push(pending);
@@ -139,6 +195,7 @@ export class WorkerPool {
         const reject = pw.currentReject;
         const worker = pw.worker;
         this.resetWorkerState(pw);
+        this.readyWorkers.delete(id);
         this.workers.delete(id);
 
         if (reject) {
@@ -170,6 +227,10 @@ export class WorkerPool {
   async destroy(): Promise<void> {
     if (this.isDestroyed) return;
     this.isDestroyed = true;
+    this.readyWorkers.clear();
+    while (this.warmupResolvers.length > 0) {
+      this.warmupResolvers.shift()?.();
+    }
 
     // Reject all queued executions
     while (this.waitQueue.length > 0) {
@@ -244,6 +305,8 @@ export class WorkerPool {
     if (!msg || typeof msg !== "object") return;
 
     if (msg.type === "READY") {
+      this.readyWorkers.add(pooled.id);
+      this.checkWarmup();
       if (!pooled.busy) {
         this.drainQueue();
       }
@@ -283,6 +346,7 @@ export class WorkerPool {
     const reject = pooled.currentReject;
     const executionId = pooled.currentExecutionId;
     this.resetWorkerState(pooled);
+    this.readyWorkers.delete(pooled.id);
     this.workers.delete(pooled.id);
 
     try {
@@ -321,6 +385,7 @@ export class WorkerPool {
       );
     }
 
+    this.readyWorkers.delete(pooled.id);
     this.workers.delete(pooled.id);
 
     // Auto healing: spawn a replacement worker if pool is still active
@@ -371,7 +436,12 @@ export class WorkerPool {
         input: pending.payload.input,
       };
 
-      pooled.worker.postMessage(message);
+      const transferList = pending.payload.transferList ? [...pending.payload.transferList] : [];
+      if (transferList.length > 0) {
+        pooled.worker.postMessage(message, transferList as any);
+      } else {
+        pooled.worker.postMessage(message);
+      }
     }
   }
 }

@@ -1,36 +1,26 @@
 # Session State
 
-- **Current Goal**: Node.js Task Runtime 全面审计、缺陷修复与 v0.2.0 架构升级
-- **Current Task**: 全面代码审计、缺陷修复、架构优化与文档更新
+- **Current Goal**: Node.js Task Runtime 全面优化与工业级加固
+- **Current Task**: TASK-011: 生产级深度加固（状态同步、泄露防范、批处理短路与导出完整性）
 - **Current Status**: DONE
 - **Completed Work**:
-  - 全面代码审计与缺陷排查，修复 5 项核心与高危漏洞：
-    1. 修复 `TaskScheduler` 中任务取消/超时且执行器迟滞返回时 Promise 悬挂挂死漏洞
-    2. 修复 `withTimeout` 中任务在超时后延迟抛错引发 Node.js `unhandledRejection` 进程崩溃漏洞
-    3. 修复 `ProcessExecutor` 与 `runCliProcess` 中 `writeToStdin` 异常未杀死子进程导致的孤儿/僵尸进程泄露
-    4. 修复 `ThreadExecutor` 中相对路径 `modulePath` 在 `eval: true` 的 Worker 中无法导入的问题
-    5. 修复 `LifecycleManager` 优雅停机时仅根据出队任务判断导致队列排队任务被提前截断丢失的问题
-  - 架构与性能核心升级（v0.2.0）：
-    1. 引入洋葱模型中间件系统（`runtime.use(middleware)` & 任务级 `middlewares`）
-    2. 引入任务流水线与链式组合（`runtime.pipeline(...)` & `task.pipe(...)`）
-    3. 批处理能力升级：新增 `task.batchSettled()` 与窗口化并发控制 `batchConcurrency`
-    4. 任务实时进度汇报 API（`context.reportProgress()` 与 `task:progress` 事件）
-    5. 调度器反压与队列深度保护（`maxQueueSize` 与 `overflowStrategy: "reject" | "drop_oldest"`）
-    6. 调度器慢路径性能优化：实现 `PriorityQueue.dequeueMatching()` O(N) 原地堆匹配替代全排序
-    7. 退避重试加入工业级 Full Jitter 随机抖动，防止重试风暴与惊群效应
-    8. WorkerPool 动态弹性伸缩（`runtime.resizeWorkers(newSize)`）
-  - 全面更新测试与文档：
-    1. 编写包含 11 项高级特性和审计修复验证的新测试集 `tests/features/v2-enhancements.test.ts`
-    2. 全局 25 个测试文件、114 个测试用例 100% 通过
-    3. 更新 `package.json` 至 0.2.0 并完成 `tsup` 生产编译构建
-    4. 全面重写 `README.md` 与更新 `docs/AI/DECISIONS.md`
+  - TASK-011 深度加固落地：
+    1. **WorkerPool 状态同步与内存泄露修复**：在 `WorkerPool` 的 `resize`、`terminateExecution`、`handleWorkerCrash`、`handleWorkerExit` 中同步清理 `readyWorkers` 集合，消除 ID 残留与预热虚高。
+    2. **WorkerPool waitQueue 即时取消 (Fast Abort)**：在 `WorkerPool.execute()` 中为等待中的任务引入 signal abort 实时响应，被取消时立刻出队并 reject，无需等待轮空。
+    3. **TaskScheduler.clear() 资源清理与通知**：在 `clear()` 清空队列时调用 `cleanupQueueSignal()` 注销信号监听器，杜绝长生命周期 AbortSignal 造成的监听器泄露，并同步触发 `notifyIdle()`。
+    4. **ExecutionContext.nextAttempt() 进度回调延续**：在 `nextAttempt()` 中带上 `onProgress`，确保重试尝试能完整触发进度事件。
+    5. **LifecycleManager 状态机防护**：严禁在 `draining` 状态下重新调用 `start()`，防止破坏关机排空流程。
+    6. **TaskCallable.batch 失败短路 (Early-Exit)**：在 `runWithConcurrencyLimit` 引入 `hasError` 短路标志，一旦子任务失败立刻停止认领后续项，节约计算资源。
+    7. **根导出与类型补全**：在 `src/index.ts` 中完整导出全部 12 个强类型事件负载接口与 `CliProcessOptions`。
+    8. **全量测试与构建**：新增 `tests/features/v2-reliability-optimizations.test.ts` 专项测试套件，全局测试套件提升至 28 个文件、132 个测试全部通过（100%），构建顺利通过。
 - **Executed Verification Commands & Results**:
-  - `pnpm test`: 25 test files, 114 passed (100%)
+  - `pnpm test`: 28 test files, 132 passed (100%)
   - `pnpm typecheck`: 0 errors
   - `pnpm build`: 成功输出 ESM / CJS / DTS (dist/)
 - **Unresolved Issues**: None
 - **Risks & Assumptions**: None
-- **Next Task**: None (All planned MVP tasks TASK-001 ~ TASK-009 are complete)
+- **Next Task**: None (项目已达到极高工业级水准)
 - **Files to Read Next Session**:
   - `docs/AI/SESSION_STATE.md`
   - `docs/AI/TASK_INDEX.md`
+

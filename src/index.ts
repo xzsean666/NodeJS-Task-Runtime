@@ -28,6 +28,7 @@ export type {
   TaskHandler,
   RuntimeOptions,
   RuntimeStats,
+  ActiveTaskInfo,
 } from "./core/types.js";
 
 // Execution Context & Contract
@@ -67,7 +68,18 @@ export {
   type RuntimeEventMap,
   type RuntimeEventName,
   type RuntimeEventListener,
+  type TaskQueuedEvent,
+  type TaskStartEvent,
+  type TaskCompleteEvent,
+  type TaskErrorEvent,
+  type TaskTimeoutEvent,
+  type TaskCancelEvent,
+  type TaskRetryEvent,
   type TaskProgressEvent,
+  type WorkerSpawnEvent,
+  type WorkerExitEvent,
+  type WorkerCrashEvent,
+  type LifecycleChangeEvent,
 } from "./observability/events.js";
 export { MetricsCollector } from "./observability/metrics.js";
 export {
@@ -83,6 +95,7 @@ export { ThreadExecutor } from "./executors/thread/executor.js";
 export { WorkerPool } from "./executors/thread/pool.js";
 export { ProcessExecutor } from "./executors/process/executor.js";
 export { CLIExecutor } from "./executors/cli/executor.js";
+export type { CliProcessOptions } from "./executors/cli/process.js";
 
 // Transport Protocols
 export { serializeJson, parseJson } from "./transport/json.js";

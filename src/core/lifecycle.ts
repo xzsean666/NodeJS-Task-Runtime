@@ -52,6 +52,12 @@ export class LifecycleManager {
     if (this._state === "running") {
       return;
     }
+    if (this._state === "draining") {
+      throw new RuntimeError({
+        code: RuntimeErrorCode.RUNTIME_DRAINING,
+        message: "Cannot start a runtime that is currently draining",
+      });
+    }
     if (this._state === "stopped") {
       throw new RuntimeError({
         code: RuntimeErrorCode.RUNTIME_STOPPED,
@@ -142,11 +148,13 @@ export class LifecycleManager {
             }
             resolve();
           }, timeout);
+          timer?.unref();
         });
 
         try {
           await Promise.race([drainPromise, timeoutPromise]);
         } finally {
+          this.drainPromiseResolve = undefined;
           if (timer) {
             clearTimeout(timer);
           }

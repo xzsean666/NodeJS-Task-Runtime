@@ -31,11 +31,17 @@ async function runWithConcurrencyLimit<TIn, TOut>(
   }
   const results: TOut[] = new Array(items.length);
   let currentIndex = 0;
+  let hasError = false;
 
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (currentIndex < items.length) {
+    while (!hasError && currentIndex < items.length) {
       const idx = currentIndex++;
-      results[idx] = await fn(items[idx]);
+      try {
+        results[idx] = await fn(items[idx]);
+      } catch (err) {
+        hasError = true;
+        throw err;
+      }
     }
   });
 

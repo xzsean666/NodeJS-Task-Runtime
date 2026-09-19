@@ -134,9 +134,14 @@ export interface TaskOptions<TInput = unknown> {
   signal?: AbortSignal;
 
   /**
+   * CLI command or binary path (or dynamic command resolver).
+   */
+  command?: string | ((input: TInput, context: any) => string);
+
+  /**
    * CLI argument builder or static arguments.
    */
-  args?: string[] | ((input: TInput) => string[]);
+  args?: string[] | ((input: TInput, context: any) => string[]);
 
   /**
    * Standard input data protocol.
@@ -157,6 +162,35 @@ export interface TaskOptions<TInput = unknown> {
    * Task-level middlewares/interceptors executed around the task.
    */
   middlewares?: TaskMiddleware[];
+
+  /**
+   * Transferable objects (ArrayBuffer, MessagePort) for zero-copy Worker Thread transfers.
+   */
+  transferList?: readonly any[];
+
+  /**
+   * Maximum buffer size in bytes for CLI/Process stdout/stderr before aborting.
+   * Default: 10485760 (10MB).
+   */
+  maxBuffer?: number;
+
+  /**
+   * Real-time callback hook for stdout chunks (e.g. for streaming, live logging).
+   */
+  onStdout?: (chunk: Buffer) => void;
+
+  /**
+   * Real-time callback hook for stderr chunks.
+   */
+  onStderr?: (chunk: Buffer) => void;
+
+  /**
+   * Automatic cleanup strategy for temporary files created via context.createTempFile().
+   * - 'on_error' (default): Automatically deletes temp files if the task fails, times out, or is cancelled.
+   * - 'always' (or true): Deletes temp files upon task completion, regardless of success or failure.
+   * - false: Does not automatically delete temp files (caller manages cleanup or calls context.cleanupTemp()).
+   */
+  autoCleanTemp?: boolean | "on_error" | "always";
 
   /**
    * Custom metadata attached to task.
@@ -199,11 +233,16 @@ export type QueueOverflowStrategy = "reject" | "drop_oldest";
  * CLI Task definition options.
  */
 export interface CliTaskOptions<TInput = unknown>
-  extends Omit<TaskOptions<TInput>, "executor"> {
+  extends Omit<TaskOptions<TInput>, "executor" | "args"> {
   /**
-   * The command or binary path to execute.
+   * The command or binary path to execute, or a function resolving it dynamically.
    */
-  command: string;
+  command: string | ((input: TInput, context: any) => string);
+
+  /**
+   * CLI argument builder or static arguments.
+   */
+  args?: string[] | ((input: TInput, context: any) => string[]);
 }
 
 /**
@@ -214,6 +253,11 @@ export interface RuntimeOptions {
    * Number of worker threads, or 'auto' to adapt to CPU cores. Default: 'auto'.
    */
   workers?: number | "auto";
+
+  /**
+   * Whether to eagerly spawn worker threads on runtime creation. Default: false (lazy initialization).
+   */
+  eager?: boolean;
 
   /**
    * Maximum global concurrency across all tasks. Default: 0 (unlimited / pool size bounded).
@@ -278,4 +322,19 @@ export interface RuntimeStats {
   idleWorkers: number;
   totalWorkers: number;
   averageDurationMs: number;
+}
+
+/**
+ * Snapshot information of an actively running task.
+ */
+export interface ActiveTaskInfo {
+  taskId: string;
+  executionId: string;
+  taskName?: string;
+  executor: ExecutorType;
+  status: ExecutionStatus;
+  durationMs: number;
+  progress: number;
+  priority: number;
+  retryCount: number;
 }

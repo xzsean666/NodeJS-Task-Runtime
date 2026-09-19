@@ -3,6 +3,9 @@
  */
 
 import { randomUUID } from "node:crypto";
+import os from "node:os";
+import path from "node:path";
+import fs from "node:fs";
 import type {
   ExecutionStatus,
   ExecutorType,
@@ -45,6 +48,8 @@ export class ExecutionContext<TInput = unknown, TOutput = unknown> {
   private readonly onProgressCallback?: (event: import("../observability/events.js").TaskProgressEvent) => void;
   private readonly abortController: AbortController;
   private userSignalCleanup?: () => void;
+  private tempFiles: string[] = [];
+  private tempDirs: string[] = [];
 
   constructor(options: ExecutionContextOptions<TInput>) {
     this.taskId = options.taskId ?? `task_${randomUUID()}`;
@@ -97,6 +102,47 @@ export class ExecutionContext<TInput = unknown, TOutput = unknown> {
     return this.abortController.signal.aborted;
   }
 
+  /**
+   * Generates a managed unique temporary file path on disk.
+   * Auto-cleaned based on options.autoCleanTemp (default: cleaned on error).
+   */
+  createTempFile(suffix = ".tmp"): string {
+    const safeSuffix = suffix.startsWith(".") ? suffix : `.${suffix}`;
+    const filename = `task_${this.taskId.slice(0, 12)}_${randomUUID().slice(0, 8)}${safeSuffix}`;
+    const filePath = path.join(os.tmpdir(), filename);
+    this.tempFiles.push(filePath);
+    return filePath;
+  }
+
+  /**
+   * Generates a managed unique temporary directory path on disk.
+   */
+  createTempDir(prefix = "task_dir_"): string {
+    const dirname = `${prefix}${this.taskId.slice(0, 12)}_${randomUUID().slice(0, 8)}`;
+    const dirPath = path.join(os.tmpdir(), dirname);
+    this.tempDirs.push(dirPath);
+    return dirPath;
+  }
+
+  /**
+   * Cleans up all temporary files and directories created for this execution.
+   */
+  async cleanupTemp(): Promise<void> {
+    const files = [...this.tempFiles];
+    const dirs = [...this.tempDirs];
+    this.tempFiles = [];
+    this.tempDirs = [];
+
+    const deletions: Promise<void>[] = [];
+    for (const f of files) {
+      deletions.push(fs.promises.unlink(f).catch(() => {}));
+    }
+    for (const d of dirs) {
+      deletions.push(fs.promises.rm(d, { recursive: true, force: true }).catch(() => {}));
+    }
+    await Promise.allSettled(deletions);
+  }
+
   markQueued(): void {
     if (this.status === "pending") {
       this.status = "queued";
@@ -117,6 +163,10 @@ export class ExecutionContext<TInput = unknown, TOutput = unknown> {
     this.durationMs = this.startedAt ? this.completedAt - this.startedAt : 0;
     this.result = result;
     this.cleanupSignal();
+
+    if (this.options.autoCleanTemp === true || this.options.autoCleanTemp === "always") {
+      this.cleanupTemp().catch(() => {});
+    }
   }
 
   markFailed(error: unknown): RuntimeError {
@@ -135,6 +185,10 @@ export class ExecutionContext<TInput = unknown, TOutput = unknown> {
     });
     this.error = runtimeErr;
     this.cleanupSignal();
+
+    if (this.options.autoCleanTemp !== false) {
+      this.cleanupTemp().catch(() => {});
+    }
     return runtimeErr;
   }
 
@@ -152,6 +206,10 @@ export class ExecutionContext<TInput = unknown, TOutput = unknown> {
     this.error = runtimeErr;
     this.abortController.abort(runtimeErr);
     this.cleanupSignal();
+
+    if (this.options.autoCleanTemp !== false) {
+      this.cleanupTemp().catch(() => {});
+    }
     return runtimeErr;
   }
 
@@ -169,6 +227,10 @@ export class ExecutionContext<TInput = unknown, TOutput = unknown> {
     this.error = runtimeErr;
     this.abortController.abort(reason ?? "Task cancelled");
     this.cleanupSignal();
+
+    if (this.options.autoCleanTemp !== false) {
+      this.cleanupTemp().catch(() => {});
+    }
     return runtimeErr;
   }
 
@@ -209,6 +271,7 @@ export class ExecutionContext<TInput = unknown, TOutput = unknown> {
       executorType: this.executorType,
       priority: this.priority,
       retryCount: this.retryCount + 1,
+      onProgress: this.onProgressCallback,
     });
   }
 

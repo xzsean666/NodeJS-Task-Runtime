@@ -11,3 +11,5 @@
 | [TASK-007](tasks/TASK-007.md) | Execution Controls (Timeout, Retry, Cancellation & Resource Limits) | DONE | TASK-002, TASK-003 | timeout, retry with backoff, abort signal, memory |
 | [TASK-008](tasks/TASK-008.md) | Runtime Core Assembly, Task API & Observability Metrics | DONE | TASK-004, TASK-005, TASK-006, TASK-007 | createRuntime, task/cli API, batch, stats |
 | [TASK-009](tasks/TASK-009.md) | End-to-End Integration Tests, Examples & Documentation | DONE | TASK-008 | e2e tests, examples, README.md |
+| [TASK-010](tasks/TASK-010.md) | Comprehensive Optimization: Transferable Objects, Stdio Buffer Protection, Type Inference & CI Workflow | DONE | TASK-009 | transferList, maxBuffer, onStdout, pipeline types, ci.yml |
+| [TASK-011](tasks/TASK-011.md) | Production Hardening: State Sync, Leak Prevention, Batch Early-Exit & SDK Type Completeness | DONE | TASK-010 | readyWorkers sync, waitQueue fast abort, batch short-circuit, type exports |

@@ -15,6 +15,7 @@ export const RuntimeErrorCode = {
   RUNTIME_STOPPED: "RUNTIME_STOPPED",
   RUNTIME_DRAINING: "RUNTIME_DRAINING",
   QUEUE_FULL: "QUEUE_FULL",
+  BUFFER_OVERFLOW: "BUFFER_OVERFLOW",
   INVALID_ARGUMENT: "INVALID_ARGUMENT",
   SERIALIZATION_ERROR: "SERIALIZATION_ERROR",
 } as const;
@@ -182,6 +183,17 @@ export class RuntimeError extends Error {
     return new RuntimeError({
       code: RuntimeErrorCode.RUNTIME_STOPPED,
       message,
+    });
+  }
+
+  /**
+   * Create a buffer overflow error.
+   */
+  static bufferOverflow(maxBytes: number, context?: Partial<RuntimeErrorOptions>): RuntimeError {
+    return new RuntimeError({
+      code: RuntimeErrorCode.BUFFER_OVERFLOW,
+      message: `Execution exceeded maximum buffer limit of ${maxBytes} bytes`,
+      ...context,
     });
   }
 
