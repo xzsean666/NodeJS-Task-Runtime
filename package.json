@@ -1,6 +1,6 @@
 {
   "name": "node-task-runtime",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A simple, powerful and extensible task execution runtime for Node.js",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -17,6 +17,7 @@
     "dist"
   ],
   "scripts": {
+    "prepare": "tsup",
     "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest",
