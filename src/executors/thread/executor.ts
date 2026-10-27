@@ -63,6 +63,7 @@ export class ThreadExecutor implements Executor {
           exportName,
           input: context.input,
           transferList: context.options.transferList,
+          isChunk: Boolean(context.options.metadata?.isChunk),
         },
         context.signal
       );

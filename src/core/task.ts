@@ -103,6 +103,34 @@ export function createTaskCallable<TInput = unknown, TOutput = unknown>(
     batchOptions?: BatchOptions<TInput>
   ): Promise<TOutput[]> {
     const concurrency = batchOptions?.batchConcurrency ?? 0;
+    const isChunked = Boolean(
+      batchOptions?.chunked || (batchOptions?.chunkSize && batchOptions.chunkSize > 0)
+    );
+
+    if (isChunked && inputs.length > 0) {
+      const size =
+        batchOptions?.chunkSize && batchOptions.chunkSize > 0
+          ? batchOptions.chunkSize
+          : Math.max(1, Math.ceil(inputs.length / (concurrency > 0 ? concurrency : 4)));
+
+      const chunks: TInput[][] = [];
+      for (let i = 0; i < inputs.length; i += size) {
+        chunks.push(inputs.slice(i, i + size));
+      }
+
+      const chunkMergedOptions = {
+        ...batchOptions,
+        metadata: {
+          ...batchOptions?.metadata,
+          isChunk: true,
+        },
+      };
+
+      return runWithConcurrencyLimit(chunks, concurrency, async (chunk) => {
+        return (callable as any)(chunk, chunkMergedOptions) as Promise<TOutput[]>;
+      }).then((chunkResults) => chunkResults.flat());
+    }
+
     return runWithConcurrencyLimit(inputs, concurrency, (item) =>
       callable(item, batchOptions)
     );

@@ -434,6 +434,7 @@ export class WorkerPool {
         modulePath: pending.payload.modulePath,
         exportName: pending.payload.exportName,
         input: pending.payload.input,
+        isChunk: pending.payload.isChunk,
       };
 
       const transferList = pending.payload.transferList ? [...pending.payload.transferList] : [];

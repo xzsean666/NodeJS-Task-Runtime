@@ -4,6 +4,8 @@
 
 import os from "node:os";
 
+export type WorkerCountOption = number | "auto" | "max" | "all";
+
 /**
  * Returns the recommended number of worker threads for the current machine.
  * Adheres to DECISION-004: Math.max(1, availableParallelism - 1) to leave
@@ -20,11 +22,16 @@ export function getAutoWorkerCount(): number {
 }
 
 /**
- * Resolves configured worker count, supporting 'auto' or explicit number.
+ * Resolves configured worker count, supporting 'auto', 'max' / 'all' (100% of cores), or explicit number.
  */
-export function resolveWorkerCount(workers?: number | "auto"): number {
+export function resolveWorkerCount(workers?: WorkerCountOption): number {
   if (typeof workers === "number" && workers > 0) {
     return Math.floor(workers);
+  }
+  if (workers === "max" || workers === "all") {
+    return typeof os.availableParallelism === "function"
+      ? os.availableParallelism()
+      : os.cpus()?.length || 1;
   }
   return getAutoWorkerCount();
 }

@@ -6,6 +6,23 @@ export const WORKER_RUNTIME_CODE = `
 const { parentPort } = require("node:worker_threads");
 
 if (parentPort) {
+  const fnCache = new Map();
+  let currentExecutionId = null;
+
+  process.on("unhandledRejection", (reason) => {
+    if (parentPort && currentExecutionId) {
+      parentPort.postMessage({
+        type: "ERROR",
+        executionId: currentExecutionId,
+        error: {
+          name: "UnhandledPromiseRejection",
+          message: reason instanceof Error ? reason.message : String(reason),
+          stack: reason instanceof Error ? reason.stack : undefined,
+        },
+      });
+    }
+  });
+
   parentPort.on("message", async (msg) => {
     if (!msg || typeof msg !== "object") return;
 
@@ -15,23 +32,30 @@ if (parentPort) {
     }
 
     if (msg.type === "EXECUTE") {
-      const { executionId, fnCode, modulePath, exportName, input } = msg;
+      const { executionId, fnCode, modulePath, exportName, input, isChunk } = msg;
+      currentExecutionId = executionId;
       try {
         let fn;
         if (fnCode) {
-          // Evaluate function from string safely
-          const trimmed = fnCode.trim();
-          if (
-            trimmed.startsWith("async function") ||
-            trimmed.startsWith("function") ||
-            trimmed.startsWith("(") ||
-            trimmed.includes("=>")
-          ) {
-            fn = (0, eval)("(" + trimmed + ")");
-          } else if (trimmed.startsWith("async ")) {
-            fn = (0, eval)("(async function " + trimmed.slice(6) + ")");
-          } else {
-            fn = (0, eval)("(function " + trimmed + ")");
+          fn = fnCache.get(fnCode);
+          if (!fn) {
+            // Evaluate function from string safely
+            const trimmed = fnCode.trim();
+            if (
+              trimmed.startsWith("async function") ||
+              trimmed.startsWith("function") ||
+              trimmed.startsWith("(") ||
+              trimmed.includes("=>")
+            ) {
+              fn = (0, eval)("(" + trimmed + ")");
+            } else if (trimmed.startsWith("async ")) {
+              fn = (0, eval)("(async function " + trimmed.slice(6) + ")");
+            } else {
+              fn = (0, eval)("(function " + trimmed + ")");
+            }
+            if (typeof fn === "function") {
+              fnCache.set(fnCode, fn);
+            }
           }
         } else if (modulePath) {
           const mod = await import(modulePath);
@@ -44,7 +68,18 @@ if (parentPort) {
           throw new TypeError("Target task is not a function: " + typeof fn);
         }
 
-        const result = await fn(input);
+        let result;
+        if (isChunk && Array.isArray(input)) {
+          const chunkLen = input.length;
+          const chunkResults = new Array(chunkLen);
+          for (let i = 0; i < chunkLen; i++) {
+            chunkResults[i] = await fn(input[i]);
+          }
+          result = chunkResults;
+        } else {
+          result = await fn(input);
+        }
+
         let returnTransfers = [];
         if (result instanceof ArrayBuffer) {
           returnTransfers = [result];
@@ -76,6 +111,10 @@ if (parentPort) {
           executionId,
           error,
         });
+      } finally {
+        if (currentExecutionId === executionId) {
+          currentExecutionId = null;
+        }
       }
     }
   });

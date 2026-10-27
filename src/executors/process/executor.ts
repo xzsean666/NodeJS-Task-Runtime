@@ -7,6 +7,7 @@ import type { Executor, ExecutorStats } from "../../core/executor.js";
 import type { ExecutionContext } from "../../core/execution.js";
 import { writeToStdin, formatOutput } from "../../transport/protocol.js";
 import { RuntimeError, RuntimeErrorCode } from "../../execution/error.js";
+import type { ResourceLimits } from "../../resource/limits.js";
 
 const NODE_CHILD_RUNNER = `
 let buffer = "";
@@ -44,7 +45,18 @@ process.stdin.on("end", async () => {
       throw new Error("No function or module specified");
     }
 
-    const result = await fn(payload.input);
+    let result;
+    if (payload.isChunk && Array.isArray(payload.input)) {
+      const chunkLen = payload.input.length;
+      const chunkResults = new Array(chunkLen);
+      for (let i = 0; i < chunkLen; i++) {
+        chunkResults[i] = await fn(payload.input[i]);
+      }
+      result = chunkResults;
+    } else {
+      result = await fn(payload.input);
+    }
+
     if (result === undefined) {
       process.stdout.write("");
     } else {
@@ -58,26 +70,38 @@ process.stdin.on("end", async () => {
 });
 `;
 
+export interface ProcessExecutorOptions {
+  resource?: ResourceLimits;
+}
+
 export class ProcessExecutor implements Executor {
   readonly type = "process" as const;
   private readonly activeProcesses = new Map<string, ChildProcess>();
+  private readonly options?: ProcessExecutorOptions;
+
+  constructor(options?: ProcessExecutorOptions) {
+    this.options = options;
+  }
 
   async execute<TInput, TOutput>(context: ExecutionContext<TInput, TOutput>): Promise<TOutput> {
     const fn = (context as any).handler ?? context.options.metadata?.fn;
     const fnCode = typeof fn === "function" ? fn.toString() : typeof fn === "string" ? fn : undefined;
     const modulePath = context.options.metadata?.modulePath as string | undefined;
     const exportName = context.options.metadata?.exportName as string | undefined;
+    const isChunk = Boolean(context.options.metadata?.isChunk);
 
     const payload = {
       fnCode,
       modulePath,
       exportName,
       input: context.input,
+      isChunk,
     };
 
     const nodeArgs = ["-e", NODE_CHILD_RUNNER];
-    if (context.options.resource?.maxMemoryMb) {
-      nodeArgs.unshift(`--max-old-space-size=${context.options.resource.maxMemoryMb}`);
+    const memoryMb = context.options.resource?.maxMemoryMb ?? this.options?.resource?.maxMemoryMb;
+    if (memoryMb) {
+      nodeArgs.unshift(`--max-old-space-size=${memoryMb}`);
     }
 
     return new Promise<TOutput>((resolve, reject) => {

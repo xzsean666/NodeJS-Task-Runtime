@@ -222,6 +222,17 @@ export interface BatchOptions<TInput = unknown> extends Partial<TaskOptions<TInp
    * Defaults to unbounded (scheduled via runtime/task concurrency limits).
    */
   batchConcurrency?: number;
+
+  /**
+   * Size of chunks to partition inputs into for accelerated batching.
+   * Workers process chunks in parallel with minimal IPC serialization overhead.
+   */
+  chunkSize?: number;
+
+  /**
+   * Automatically partition inputs into chunks matching the worker pool size.
+   */
+  chunked?: boolean;
 }
 
 /**
@@ -250,9 +261,20 @@ export interface CliTaskOptions<TInput = unknown>
  */
 export interface RuntimeOptions {
   /**
-   * Number of worker threads, or 'auto' to adapt to CPU cores. Default: 'auto'.
+   * Number of worker threads, or 'auto' (cores - 1), or 'max' / 'all' (100% of cores). Default: 'auto'.
    */
-  workers?: number | "auto";
+  workers?: number | "auto" | "max" | "all";
+
+  /**
+   * Maximum memory limit per worker/process (e.g. '2GB', '4GB', 4096).
+   * Automatically sets V8 max-old-space-size and worker resource limits.
+   */
+  memory?: string | number;
+
+  /**
+   * Resource constraints (e.g. max memory limit, cpu quota).
+   */
+  resource?: ResourceLimits;
 
   /**
    * Whether to eagerly spawn worker threads on runtime creation. Default: false (lazy initialization).

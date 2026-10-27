@@ -6,6 +6,7 @@ import type {
   RuntimeOptions,
   TaskOptions,
   CliTaskOptions,
+  BatchOptions,
   RuntimeStats,
   ActiveTaskInfo,
   TaskHandler,
@@ -32,6 +33,7 @@ import { withTimeout } from "../execution/timeout.js";
 import { normalizeRetryOptions } from "../execution/retry.js";
 import type { Executor } from "./executor.js";
 import { resolveWorkerCount } from "../resource/cpu.js";
+import { parseMemoryLimit } from "../resource/memory.js";
 import type { Logger } from "../observability/logger.js";
 
 export class TaskRuntime {
@@ -72,6 +74,17 @@ export class TaskRuntime {
         ? 0
         : defaultWorkerCount;
 
+    let resolvedResource = options.resource ? { ...options.resource } : undefined;
+    if (options.memory) {
+      const memoryMb = parseMemoryLimit(options.memory);
+      if (memoryMb > 0) {
+        resolvedResource = {
+          ...resolvedResource,
+          maxMemoryMb: memoryMb,
+        };
+      }
+    }
+
     this.scheduler = new TaskScheduler({
       maxConcurrency: resolvedMaxConcurrency,
       maxQueueSize: options.maxQueueSize,
@@ -86,10 +99,10 @@ export class TaskRuntime {
     );
 
     this.threadExecutor = new ThreadExecutor(
-      { size: defaultWorkerCount },
+      { size: defaultWorkerCount, resource: resolvedResource },
       this.events
     );
-    this.processExecutor = new ProcessExecutor();
+    this.processExecutor = new ProcessExecutor({ resource: resolvedResource });
     this.cliExecutor = new CLIExecutor();
 
     if (options.eager) {
@@ -331,6 +344,49 @@ export class TaskRuntime {
 
   async all<T>(tasks: Array<(() => Promise<T>) | Promise<T>>): Promise<T[]> {
     const promises = tasks.map((t) => (typeof t === "function" ? t() : t));
+    return Promise.all(promises);
+  }
+
+  /**
+   * High-performance multi-core parallel array processing across worker threads.
+   * Automatically partitions work into chunks for maximum throughput.
+   */
+  async map<TIn = unknown, TOut = unknown>(
+    items: TIn[],
+    handler: TaskHandler<TIn, TOut> | string,
+    options?: BatchOptions<TIn>
+  ): Promise<TOut[]> {
+    const task = this.task(handler, options);
+    const chunkedOptions: BatchOptions<TIn> = {
+      chunked: true,
+      ...options,
+    };
+    return task.batch(items, chunkedOptions);
+  }
+
+  /**
+   * Executes a side-effect task across an array in parallel.
+   */
+  async each<TIn = unknown>(
+    items: TIn[],
+    handler: TaskHandler<TIn, void> | string,
+    options?: BatchOptions<TIn>
+  ): Promise<void> {
+    await this.map(items, handler, options);
+  }
+
+  /**
+   * Runs multiple tasks or functions in parallel, returning all results.
+   */
+  async parallel<T>(
+    tasks: Array<(() => Promise<T>) | Promise<T> | TaskCallable<any, T>>
+  ): Promise<T[]> {
+    const promises = tasks.map((t) => {
+      if (typeof t === "function") {
+        return (t as any)();
+      }
+      return t;
+    });
     return Promise.all(promises);
   }
 

@@ -17,6 +17,50 @@ export interface CliProcessOptions {
   stderr?: "string" | "binary" | "inherit" | "ignore";
 }
 
+/**
+ * Safely parses a command line string into command and arguments respecting quotes
+ * without invoking a shell, preventing shell injection vulnerabilities.
+ */
+export function parseCommandLine(commandLine: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  let quoteChar = "";
+
+  for (let i = 0; i < commandLine.length; i++) {
+    const char = commandLine[i];
+
+    if (inQuotes) {
+      if (char === quoteChar) {
+        inQuotes = false;
+      } else if (char === "\\" && i + 1 < commandLine.length && commandLine[i + 1] === quoteChar) {
+        current += quoteChar;
+        i++;
+      } else {
+        current += char;
+      }
+    } else {
+      if (char === "'" || char === '"') {
+        inQuotes = true;
+        quoteChar = char;
+      } else if (/\s/.test(char)) {
+        if (current.length > 0) {
+          args.push(current);
+          current = "";
+        }
+      } else {
+        current += char;
+      }
+    }
+  }
+
+  if (current.length > 0) {
+    args.push(current);
+  }
+
+  return args;
+}
+
 export function runCliProcess<TInput = unknown, TOutput = unknown>(
   context: ExecutionContext<TInput, TOutput>,
   command: string | ((input: TInput, context: ExecutionContext<TInput, TOutput>) => string),
@@ -66,6 +110,12 @@ export function runCliProcess<TInput = unknown, TOutput = unknown>(
       }
     } else if (Array.isArray(options.args)) {
       resolvedArgs = options.args;
+    } else if (typeof resolvedCommand === "string" && !options.args && resolvedCommand.includes(" ")) {
+      const parsed = parseCommandLine(resolvedCommand);
+      if (parsed.length > 0) {
+        resolvedCommand = parsed[0];
+        resolvedArgs = parsed.slice(1);
+      }
     }
 
     const env = { ...process.env, ...options.env };

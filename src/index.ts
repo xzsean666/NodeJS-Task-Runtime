@@ -51,7 +51,7 @@ export {
 export { createLinkedAbortController } from "./execution/cancellation.js";
 
 // Resource Management
-export { getAutoWorkerCount, resolveWorkerCount } from "./resource/cpu.js";
+export { getAutoWorkerCount, resolveWorkerCount, type WorkerCountOption } from "./resource/cpu.js";
 export { parseMemoryLimit, toNodeMaxOldSpaceSizeArg } from "./resource/memory.js";
 export { normalizeResourceLimits } from "./resource/limits.js";
 export type { ResourceLimits } from "./resource/limits.js";
@@ -95,7 +95,7 @@ export { ThreadExecutor } from "./executors/thread/executor.js";
 export { WorkerPool } from "./executors/thread/pool.js";
 export { ProcessExecutor } from "./executors/process/executor.js";
 export { CLIExecutor } from "./executors/cli/executor.js";
-export type { CliProcessOptions } from "./executors/cli/process.js";
+export { parseCommandLine, type CliProcessOptions } from "./executors/cli/process.js";
 
 // Transport Protocols
 export { serializeJson, parseJson } from "./transport/json.js";

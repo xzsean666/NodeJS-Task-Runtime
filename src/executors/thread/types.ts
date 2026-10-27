@@ -12,6 +12,7 @@ export type WorkerInboundMessage =
       modulePath?: string;
       exportName?: string;
       input: unknown;
+      isChunk?: boolean;
     }
   | {
       type: "PING";
@@ -41,7 +42,7 @@ export type WorkerOutboundMessage =
     };
 
 export interface WorkerPoolOptions {
-  size?: number | "auto";
+  size?: number | "auto" | "max" | "all";
   resource?: ResourceLimits;
 }
 
@@ -52,4 +53,5 @@ export interface WorkerExecutionPayload {
   exportName?: string;
   input: unknown;
   transferList?: readonly any[];
+  isChunk?: boolean;
 }
