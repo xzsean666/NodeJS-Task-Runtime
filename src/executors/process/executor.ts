@@ -24,7 +24,16 @@ process.stdin.on("end", async () => {
     }
     const payload = JSON.parse(buffer);
     let fn;
-    if (payload.fnCode) {
+    if (payload.modulePath) {
+      const mod = await import(payload.modulePath);
+      fn = payload.exportName
+        ? mod[payload.exportName]
+        : (typeof mod === "function"
+            ? mod
+            : (typeof mod?.default === "function"
+                ? mod.default
+                : (mod?.default?.default || mod)));
+    } else if (payload.fnCode) {
       const trimmed = payload.fnCode.trim();
       if (
         trimmed.startsWith("async function") ||
@@ -38,9 +47,6 @@ process.stdin.on("end", async () => {
       } else {
         fn = (0, eval)("(function " + trimmed + ")");
       }
-    } else if (payload.modulePath) {
-      const mod = await import(payload.modulePath);
-      fn = payload.exportName ? mod[payload.exportName] : (mod.default || mod);
     } else {
       throw new Error("No function or module specified");
     }

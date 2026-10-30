@@ -135,10 +135,14 @@ export function runCliProcess<TInput = unknown, TOutput = unknown>(
         shell: false,
       });
     } catch (err: any) {
+      let msg = `Failed to spawn command '${resolvedCommand}': ${err.message}`;
+      if (err.code === "ENOENT" || err.message?.includes("ENOENT")) {
+        msg += ` (Hint: Executable '${resolvedCommand}' was not found in PATH or working directory. Please ensure it is installed and available in system environment PATH)`;
+      }
       reject(
         new RuntimeError({
           code: RuntimeErrorCode.PROCESS_FAILED,
-          message: `Failed to spawn command '${resolvedCommand}': ${err.message}`,
+          message: msg,
           taskId: context.taskId,
           executionId: context.executionId,
           executor: "cli",
@@ -250,10 +254,14 @@ export function runCliProcess<TInput = unknown, TOutput = unknown>(
       if (context.signal) {
         context.signal.removeEventListener("abort", onAbort);
       }
+      let msg = `Process error for '${command}': ${err.message}`;
+      if ((err as any).code === "ENOENT" || err.message?.includes("ENOENT")) {
+        msg += ` (Hint: Executable '${resolvedCommand}' was not found in PATH or working directory. Please ensure it is installed and available in system environment PATH)`;
+      }
       reject(
         new RuntimeError({
           code: RuntimeErrorCode.PROCESS_FAILED,
-          message: `Process error for '${command}': ${err.message}`,
+          message: msg,
           taskId: context.taskId,
           executionId: context.executionId,
           executor: "cli",

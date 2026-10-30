@@ -99,7 +99,11 @@ export class TaskRuntime {
     );
 
     this.threadExecutor = new ThreadExecutor(
-      { size: defaultWorkerCount, resource: resolvedResource },
+      {
+        size: defaultWorkerCount,
+        resource: resolvedResource,
+        maxTasksPerWorker: options.maxTasksPerWorker,
+      },
       this.events
     );
     this.processExecutor = new ProcessExecutor({ resource: resolvedResource });
@@ -183,12 +187,26 @@ export class TaskRuntime {
           });
 
           // Attach handler function to context
-          (context as any).handler = handler;
-          if (typeof handler === "string") {
-            context.options.metadata = {
-              ...context.options.metadata,
-              modulePath: handler,
-            };
+          if (typeof handler === "function") {
+            (context as any).handler = handler;
+          } else if (typeof handler === "string") {
+            const trimmed = handler.trim();
+            const isCodeString =
+              trimmed.includes("\n") ||
+              trimmed.includes("=>") ||
+              trimmed.includes("{") ||
+              trimmed.startsWith("function") ||
+              trimmed.startsWith("async") ||
+              trimmed.startsWith("(");
+
+            if (isCodeString) {
+              (context as any).handler = handler;
+            } else {
+              context.options.metadata = {
+                ...context.options.metadata,
+                modulePath: handler,
+              };
+            }
           }
 
           const executor = this.getExecutor(executorType);

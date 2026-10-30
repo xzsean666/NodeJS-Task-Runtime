@@ -44,6 +44,7 @@ export type WorkerOutboundMessage =
 export interface WorkerPoolOptions {
   size?: number | "auto" | "max" | "all";
   resource?: ResourceLimits;
+  maxTasksPerWorker?: number;
 }
 
 export interface WorkerExecutionPayload {

@@ -22,6 +22,7 @@ interface PooledWorker {
   currentExecutionId?: string;
   currentResolve?: (result: unknown) => void;
   currentReject?: (error: unknown) => void;
+  tasksExecuted: number;
 }
 
 interface PendingExecution {
@@ -283,6 +284,7 @@ export class WorkerPool {
       id: workerId,
       worker,
       busy: false,
+      tasksExecuted: 0,
     };
 
     this.workers.set(workerId, pooled);
@@ -315,9 +317,19 @@ export class WorkerPool {
 
     if (msg.type === "SUCCESS" && pooled.currentExecutionId === msg.executionId) {
       const resolve = pooled.currentResolve;
+      pooled.tasksExecuted++;
+      const shouldRecycle = Boolean(
+        this.options.maxTasksPerWorker &&
+        this.options.maxTasksPerWorker > 0 &&
+        pooled.tasksExecuted >= this.options.maxTasksPerWorker
+      );
+
       this.resetWorkerState(pooled);
       if (resolve) {
         resolve(msg.result);
+      }
+      if (shouldRecycle) {
+        this.recycleWorker(pooled);
       }
       this.drainQueue();
       return;
@@ -325,6 +337,13 @@ export class WorkerPool {
 
     if (msg.type === "ERROR" && pooled.currentExecutionId === msg.executionId) {
       const reject = pooled.currentReject;
+      pooled.tasksExecuted++;
+      const shouldRecycle = Boolean(
+        this.options.maxTasksPerWorker &&
+        this.options.maxTasksPerWorker > 0 &&
+        pooled.tasksExecuted >= this.options.maxTasksPerWorker
+      );
+
       this.resetWorkerState(pooled);
       if (reject) {
         const err = new Error(msg.error.message);
@@ -332,8 +351,23 @@ export class WorkerPool {
         if (msg.error.stack) err.stack = msg.error.stack;
         reject(err);
       }
+      if (shouldRecycle) {
+        this.recycleWorker(pooled);
+      }
       this.drainQueue();
       return;
+    }
+  }
+
+  private recycleWorker(pooled: PooledWorker): void {
+    const id = pooled.id;
+    this.readyWorkers.delete(id);
+    this.workers.delete(id);
+    try {
+      pooled.worker.terminate().catch(() => {});
+    } catch {}
+    if (!this.isDestroyed && this.workers.size < this.targetSize) {
+      this.spawnWorker();
     }
   }
 
@@ -425,19 +459,20 @@ export class WorkerPool {
       pooled.currentReject = pending.reject;
 
       const fn = pending.payload.fn;
-      const fnCode = typeof fn === "function" ? fn.toString() : typeof fn === "string" ? fn : undefined;
+      const modulePath = pending.payload.modulePath;
+      const fnCode = typeof fn === "function" ? fn.toString() : (modulePath ? undefined : (typeof fn === "string" ? fn : undefined));
 
       const message: WorkerInboundMessage = {
         type: "EXECUTE",
         executionId: pending.payload.executionId,
         fnCode,
-        modulePath: pending.payload.modulePath,
+        modulePath,
         exportName: pending.payload.exportName,
         input: pending.payload.input,
         isChunk: pending.payload.isChunk,
       };
 
-      const transferList = pending.payload.transferList ? [...pending.payload.transferList] : [];
+      const transferList = normalizeTransferList(pending.payload.transferList);
       if (transferList.length > 0) {
         pooled.worker.postMessage(message, transferList as any);
       } else {
@@ -445,4 +480,26 @@ export class WorkerPool {
       }
     }
   }
+}
+
+/**
+ * Normalizes transferList, extracting standalone ArrayBuffers from Buffer/TypedArray views
+ * to prevent DataCloneError.
+ */
+export function normalizeTransferList(transferList?: readonly any[]): any[] {
+  if (!transferList || transferList.length === 0) return [];
+  const normalized: any[] = [];
+  for (const item of transferList) {
+    if (!item) continue;
+    if (item instanceof ArrayBuffer) {
+      if (!normalized.includes(item)) normalized.push(item);
+    } else if (ArrayBuffer.isView(item) && item.buffer instanceof ArrayBuffer) {
+      if (item.byteOffset === 0 && item.byteLength === item.buffer.byteLength) {
+        if (!normalized.includes(item.buffer)) normalized.push(item.buffer);
+      }
+    } else {
+      normalized.push(item);
+    }
+  }
+  return normalized;
 }

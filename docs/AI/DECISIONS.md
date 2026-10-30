@@ -85,4 +85,15 @@
 - **背景**: 节约异常场景下的系统计算与 I/O 资源，确保运行时生命周期状态机的一致性与单向不可逆。
 - **状态**: Accepted
 
+## DECISION-018: 二进制 TransferList 自动规整与零拷贝强化 (TransferList Normalization & Auto Zero-Copy)
+- **决策**: 引入 `normalizeTransferList`，自动从 Buffer / TypedArray 等 View 对象中提取独立 `ArrayBuffer`，规避 Node.js `DataCloneError: Found invalid value in transferList`；在 Worker Runtime 返回结果中自动识别并零拷贝转移独立的 Buffer / TypedArray。
+- **背景**: 开发者直接传递 Buffer 会触发原生 V8 抛错，自动规整彻底消除了该高频踩坑点。
+- **状态**: Accepted
+
+## DECISION-019: Worker 周期性滚动回收与 TypeScript 转译辅助垫片 (Worker Recycling & Transpiler Shims)
+- **决策**: 支持 `maxTasksPerWorker` 配置，Worker 累计处理指定数量任务后平滑回收并重新拉起，结合 LRU 缓存上限杜绝长期运行下的堆内存碎片与泄漏；在 Worker 内部注入 `__awaiter` 与 `__generator` 垫片，确保 tsc / Babel 转译函数在 Worker 中正常运行；支持 NestJS 动态模块 `TaskRuntimeModule.forRoot()` / `forRootAsync()` 与 CLI ENOENT 诊断增强。
+- **背景**: 消除长周期后端运行中的内存泄漏，极大降低 NestJS / TypeScript 开发者在多核任务编排中的上手与集成门槛。
+- **状态**: Accepted
+
+
 

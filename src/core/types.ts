@@ -277,6 +277,13 @@ export interface RuntimeOptions {
   resource?: ResourceLimits;
 
   /**
+   * Maximum number of tasks a worker thread executes before being gracefully recycled.
+   * Helps prevent V8 heap fragmentation and memory leaks in long-running services.
+   * Default: 0 (no recycling).
+   */
+  maxTasksPerWorker?: number;
+
+  /**
    * Whether to eagerly spawn worker threads on runtime creation. Default: false (lazy initialization).
    */
   eager?: boolean;

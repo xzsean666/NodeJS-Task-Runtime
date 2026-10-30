@@ -101,3 +101,12 @@ export { parseCommandLine, type CliProcessOptions } from "./executors/cli/proces
 export { serializeJson, parseJson } from "./transport/json.js";
 export { toBuffer } from "./transport/binary.js";
 export { writeToStdin, formatOutput } from "./transport/protocol.js";
+
+// NestJS Integration
+export {
+  TaskRuntimeModule,
+  TASK_RUNTIME,
+  type NestTaskRuntimeOptions,
+  type NestTaskRuntimeAsyncOptions,
+} from "./integrations/nestjs.js";
+export { normalizeTransferList } from "./executors/thread/pool.js";
